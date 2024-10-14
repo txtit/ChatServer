@@ -30,8 +30,8 @@ const sendEmail = async ({ to, subject, html, text, attachments }) => {
             from: process.env.SMTP_USER, // Sender email address
             to, // Recipient email address
             subject, // Email subject
-            text: text || "This is the plain text version of the email.", // Plain text body (optional)
-            html: html || "<strong>This is the HTML version of the email.</strong>", // HTML body (optional)
+            text, // Plain text body (optional)
+            html, // HTML body (optional)
             attachments, // Attachments (optional)
         };
 

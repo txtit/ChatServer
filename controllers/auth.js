@@ -8,7 +8,7 @@ const filterObj = require("../utils/filterObj");
 // Model
 const User = require("../models/user");
 // const otp = require("../Templates/Mail/otp");
-// const resetPassword = require("../Templates/Mail/resetPassword");
+const resetPassword = require("../Templates/Mail/resetPassword");
 const { promisify } = require("util");
 // const catchAsync = require("../utils/catchAsync");
 
@@ -85,7 +85,8 @@ exports.sendOTP = async (req, res, next) => {
     mailService.sendEmail({
         from: 'thao16068@gmail.com',
         to: user.email,
-        subject: "Verification OTP",
+        subject: "Verification OTP ",
+        text: `this otp ${new_otp} `,
         // html: otp(user.firstName, new_otp),
         attachments: [],
     });
@@ -168,7 +169,13 @@ exports.login = async (req, res, next) => {
         return;
     }
 
-    if (!user || !(await user.correctPassword(password, user.password))) {
+    console.log(user.password);
+    console.log(password);
+    console.log(email);
+    console.log(user.email);
+    console.log(user);
+
+    if (!(await user.correctPassword(password, user.password))) {
         res.status(400).json({
             status: "error",
             message: "Email or password is incorrect",
@@ -255,7 +262,8 @@ exports.forgotPassword = async (req, res, next) => {
             from: 'thao16068@gmail.com',
             to: user.email,
             subject: "Reset Password",
-            // html: resetPassword(user.firstName, resetURL),
+            // text: `this link to reset ${resetURL}`,
+            html: resetPassword(user.firstName, resetURL),
             attachments: [],
         });
 
@@ -267,7 +275,7 @@ exports.forgotPassword = async (req, res, next) => {
         user.passwordResetToken = undefined;
         user.passwordResetExpires = undefined;
         await user.save({ validateBeforeSave: false });
-
+        console.log(err);
         return res.status(500).json({
             message: "There was an error sending the email. Try again later!",
         });
