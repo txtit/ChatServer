@@ -21,6 +21,8 @@ const { promisify } = require("util");
 const User = require("./models/user");
 const FriendRequest = require("./models/friendRequest");
 const OneToOneMessage = require("./models/OneToOneMessage");
+const VideoCall = require("./models/videoCall");
+const AudioCall = require("./models/audioCall");
 
 const io = new Server(server, {
     cors: {
@@ -82,7 +84,7 @@ io.on("connection", async (socket) => {
             const from = await User.findById(data.from).select("socket_id");
 
             if (to?.socket_id) {
-                io.to(to.socket_id).emit("New_friend_request", {
+                io.to(to.socket_id).emit("new_friend_request", {
                     message: "New friend request received",
                 });
             }
@@ -90,6 +92,7 @@ io.on("connection", async (socket) => {
             if (from?.socket_id) {
                 io.to(from.socket_id).emit("request_send", {
                     message: "Request send successfully",
+                    to: to
                 });
             }
 
@@ -106,6 +109,33 @@ io.on("connection", async (socket) => {
         }
 
     });
+
+    socket.on("cancel_send_request", async (data, callback) => {
+        try {
+            console.log("request", data);
+            const to = await User.findById(data.to).select("socket_id");
+            const from = await User.findById(data.from).select("socket_id");
+            if (from?.socket_id) {
+                io.to(from.socket_id).emit("request_send_cancel", {
+                    message: "Request cancel send successfully",
+                    to: to,
+                });
+            }
+            const exitsting_request = await FriendRequest.findOne({
+                sender: from._id,
+                recipient: to._id
+            })
+            // Create a new friend request
+            console.log(exitsting_request)
+            await FriendRequest.findByIdAndDelete(exitsting_request._id);
+            callback(null, { success: true });
+        } catch (error) {
+            console.error("error in friend_request", error);
+            callback(error)
+        }
+
+    });
+
 
     socket.on("accept_request", async (data) => {
         console.log("accept", data);
@@ -128,7 +158,10 @@ io.on("connection", async (socket) => {
         await FriendRequest.findByIdAndDelete(data.request_id);
 
         io.to(sender.socket_id).emit("request_accepted", {
-            message: "Friend Reqeust Accepted",
+            message: "Friend Request Accepted",
+        });
+        io.to(receiver.socket_id).emit("request_accepted", {
+            message: "Accepting Successfull",
         });
 
     });
@@ -198,13 +231,81 @@ io.on("connection", async (socket) => {
         }
     });
 
+    socket.on("delete_conversations", async (data) => {
+        // data : {to:from:}
+        const { to, from } = data;
+
+        // check if there us any existing conversation 
+
+        const exitsting_conversations = await OneToOneMessage.find({
+            participants: { $size: 2, $all: [to, from] },
+        }).populate("participants", "firstName lastName _id email status");
+        console.log("hehe", exitsting_conversations.map(con => con._id))
+
+        try {
+            const conversationId = exitsting_conversations.map(con => con._id);
+            const conversation = await OneToOneMessage.findById(conversationId);
+
+            if (!conversation) {
+                return socket.emit("delete_chat_fail", { message: "Conversation not found" });
+            }
+
+            // Kiểm tra xem người dùng đã có trong danh sách `deletion` chưa
+            const alreadyDeleted = conversation.delettion.some(
+                (entry) => entry.from.toString() === from
+            );
+
+            if (!alreadyDeleted) {
+                // Thêm thông tin xóa vào mảng `deletion`
+                conversation.delettion.push({ from: from, deletedAt: new Date() });
+                await conversation.save();
+            } else {
+                // Nếu đã xóa trước đó, cập nhật thời gian xóa mới và người xóa
+                const deletionEntry = conversation.delettion.find(entry => entry.from.toString() === from);
+                if (deletionEntry) {
+                    // Cập nhật lại thời gian xóa cho người xóa này
+                    deletionEntry.deletedAt = new Date();
+                    await conversation.save();
+                }
+
+            }
+
+            socket.emit("delete_chat_success", { message: "Conversation marked as deleted" });
+        } catch (err) {
+            console.log("error delete chat", err);
+        }
+
+    });
+
+
+
 
     socket.on("get_messages", async (data, callback) => {
         try {
-            const { messages } = await OneToOneMessage.findById(
-                data.conversation_id
-            ).select("messages");
-            callback(messages)
+            console.log("dâtnek", data)
+            const conversation = await OneToOneMessage.findById(data.conversation_id);
+
+            if (!conversation) {
+                return socket.emit("fetch_messages_fail", { message: "Conversation not found" });
+            }
+
+            // Lấy thời gian xóa của người dùng (nếu có)
+            const deletionEntry = conversation.delettion.find(
+                (entry) => entry.from.toString() === data.user_id
+            );
+
+            const deletedAt = deletionEntry ? deletionEntry.deletedAt : null;
+
+            // Lọc tin nhắn dựa trên thời gian xóa
+            const filteredMessages = deletedAt
+                ? conversation.messages.filter((msg) => msg.created_at - deletedAt > 0)
+                : conversation.messages;
+            // const { messages } = await OneToOneMessage.findById(
+            //     data.conversation_id
+            // ).select("messages");
+            console.log("mes", deletedAt)
+            console.log("mes", deletedAt)
+            callback(filteredMessages)
         } catch (error) {
             console.log(error);
         }
@@ -240,12 +341,20 @@ io.on("connection", async (socket) => {
             chat.messages.push(new_message);
             await chat?.save({ new: true, validateModifiedOnly: true });
             // emit incoming_message -> to user 
+            let new_chat = await OneToOneMessage.findOne({
+                participants: { $all: [to, from] },
+            }).populate(
+                "participants",
+                "firstName lastName _id email status" // Chọn trường bạn muốn populate
+            );
             io.to(from_user?.socket_id).emit("new message", {
                 conversation_id,
+                new_chat,
                 message: new_message,
             });
             io.to(to_user?.socket_id).emit("new message", {
                 conversation_id,
+                new_chat,
                 message: new_message,
             });
         } catch (error) {

@@ -7,6 +7,19 @@ const OneToOneMessageSchema = new mongoose.Schema({
             ref: "User",
         },
     ],
+    delettion: [
+        {
+            from: {
+                type: mongoose.Schema.ObjectId,
+                ref: "User",
+            },
+            deletedAt: {
+                type: Date,
+                default: Date.now(),
+            },
+        },
+
+    ],
     messages: [{
         to: {
             type: mongoose.Schema.ObjectId,
