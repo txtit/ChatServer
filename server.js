@@ -26,10 +26,15 @@ const AudioCall = require("./models/audioCall");
 
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:3001",
-        methos: ["GET", "POST"],
+        origin: [
+            "http://localhost:3001",
+            "http://localhost:5173"
+        ],
+        methos: ["GET", "POST", "PUT"],
     },
 });
+
+
 
 
 
@@ -60,7 +65,6 @@ io.on("connection", async (socket) => {
 
     console.log("new connection:", socket.id);
     const user_id = socket.handshake.query["user_id"];
-
     const socket_id = socket.id;
 
     if (Boolean(user_id)) {
@@ -81,7 +85,7 @@ io.on("connection", async (socket) => {
             // }
 
             const to = await User.findById(data.to).select("socket_id");
-            const from = await User.findById(data.from).select("socket_id");
+            const from = await User.findById(data.from).select("socket_id arrayUserFollowed");
 
             if (to?.socket_id) {
                 io.to(to.socket_id).emit("new_friend_request", {
@@ -95,6 +99,14 @@ io.on("connection", async (socket) => {
                     to: to
                 });
             }
+
+            if (!from.arrayUserFollowed.includes(to._id)) {
+                from.arrayUserFollowed.push(to._id);
+                await from.save(); // Lưu thay đổi
+            }
+
+            // from.arrayUserFollowed.push(to);
+            // await from.save();
 
             // Create a new friend request
             await FriendRequest.create({
@@ -114,7 +126,7 @@ io.on("connection", async (socket) => {
         try {
             console.log("request", data);
             const to = await User.findById(data.to).select("socket_id");
-            const from = await User.findById(data.from).select("socket_id");
+            const from = await User.findById(data.from).select("socket_id arrayUserFollowed");
             if (from?.socket_id) {
                 io.to(from.socket_id).emit("request_send_cancel", {
                     message: "Request cancel send successfully",
@@ -125,6 +137,10 @@ io.on("connection", async (socket) => {
                 sender: from._id,
                 recipient: to._id
             })
+            if (from.arrayUserFollowed.includes(to._id)) {
+                from.arrayUserFollowed.remove(to._id);
+                await from.save(); // Lưu thay đổi
+            }
             // Create a new friend request
             console.log(exitsting_request)
             await FriendRequest.findByIdAndDelete(exitsting_request._id);
@@ -155,7 +171,7 @@ io.on("connection", async (socket) => {
         await sender.save({ new: true, validateModifiedOnly: true });
 
 
-        await FriendRequest.findByIdAndDelete(data.request_id);
+        // await FriendRequest.findByIdAndDelete(data.request_id);
 
         io.to(sender.socket_id).emit("request_accepted", {
             message: "Friend Request Accepted",
@@ -277,9 +293,6 @@ io.on("connection", async (socket) => {
 
     });
 
-
-
-
     socket.on("get_messages", async (data, callback) => {
         try {
             console.log("dâtnek", data)
@@ -311,6 +324,11 @@ io.on("connection", async (socket) => {
         }
     });
 
+    // socket.on("text_comment", async(data) => {
+    //     // data : {to, from, text}
+
+    // })
+
     // Handle text/ link message
 
     socket.on("text_message", async (data) => {
@@ -338,6 +356,8 @@ io.on("connection", async (socket) => {
                 created_at: Date.now(),
                 text: message
             }
+            console.log("chattttttttttttttt", new_message);
+
             chat.messages.push(new_message);
             await chat?.save({ new: true, validateModifiedOnly: true });
             // emit incoming_message -> to user 
@@ -598,3 +618,4 @@ io.on("connection", async (socket) => {
         socket.disconnect(0);
     })
 });
+

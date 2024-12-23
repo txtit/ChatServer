@@ -10,6 +10,7 @@ const User = require("../models/user");
 // const otp = require("../Templates/Mail/otp");
 const resetPassword = require("../Templates/Mail/resetPassword");
 const { promisify } = require("util");
+const { default: mongoose } = require("mongoose");
 // const catchAsync = require("../utils/catchAsync");
 
 // this function will return you jwt token
@@ -146,7 +147,12 @@ exports.verifyOTP = async (req, res, next) => {
 // User Login
 exports.login = async (req, res, next) => {
     const { email, password } = req.body;
-
+    const cookieOptions = {
+        expires: new Date(Date.now() + 3600 * 1000), // 1 giờ
+        httpOnly: true, // Cookie không thể truy cập từ JavaScript
+        secure: process.env.NODE_ENV === 'production', // Sử dụng secure khi ở môi trường production
+        sameSite: 'None', // Cookie có thể chia sẻ qua các domain khác nhau
+    }
     // console.log(email, password);
 
     if (!email || !password) {
@@ -178,14 +184,19 @@ exports.login = async (req, res, next) => {
     }
 
     const token = signToken(user._id);
-
+    user.token = token;
+    await user.save();
+    // Gửi token vào cookie
+    res.cookie('jwt', token, cookieOptions);
     res.status(200).json({
         status: "success",
         message: "Logged in successfully!",
-        token,
+        token: user.token,
         user_id: user._id,
     });
 };
+
+
 
 // Protect
 exports.protect = async (req, res, next) => {
@@ -196,6 +207,7 @@ exports.protect = async (req, res, next) => {
     } else if (req.cookies.jwt) {
         token = req.cookies.jwt;
     }
+    // console.log(req.cookies.jwt)
     if (!token) {
         return res.status(401).json({
             message: "You are not logged in! Please log in to get access.",

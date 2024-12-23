@@ -11,6 +11,10 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: [true, "Last Name is required"],
     },
+    username: {
+        type: String,
+        unique: true,
+    },
     about: {
         type: String,
     },
@@ -71,12 +75,25 @@ const userSchema = new mongoose.Schema({
             ref: "User",
         },
     ],
+    arrayUserFollowed: [
+        {
+            type: mongoose.Schema.ObjectId,
+            ref: "User",
+        },
+    ],
     socket_id: {
         type: String
     },
     status: {
         type: String,
         enum: ["Online", "Offline"]
+    },
+    likePostId: [{
+        type: mongoose.Types.ObjectId,
+        ref: 'Post'
+    }],
+    token: {
+        type: String
     }
 });
 

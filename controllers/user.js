@@ -41,7 +41,7 @@ exports.getUsers = async (req, res) => {
 
     const all_users = await User.find({
         verified: true
-    }).select("firstName lastName _id");
+    }).select("firstName lastName _id username friends");
 
 
     const this_user = req.user;
@@ -49,6 +49,7 @@ exports.getUsers = async (req, res) => {
         firstName: this_user.firstName,
         lastName: this_user.lastName,
         _id: this_user._id,
+        token: this_user.token,
     };
     const remaining_users = all_users.filter(
         (user) =>
@@ -64,19 +65,102 @@ exports.getUsers = async (req, res) => {
     });
 };
 
+exports.getUserById = async (req, res) => {
+    try {
+        // Lấy id từ request params
+        const { id } = req.params;
+
+        // Kiểm tra nếu id không được cung cấp
+        if (!id) {
+            return res.status(400).json({
+                status: "fail",
+                message: "User ID is required",
+            });
+        }
+        const userid = new mongoose.Types.ObjectId(id);
+        // Tìm người dùng theo id
+        const user = await User.findById(userid).select("firstName lastName _id verified likePostId email username token arrayUserFollowed avatar ");
+
+        // Kiểm tra nếu không tìm thấy người dùng
+        if (!user) {
+            return res.status(404).json({
+                status: "fail",
+                message: "User not found",
+            });
+        }
+
+        // Trả thông tin người dùng
+        return res.status(200).json({
+            status: "success",
+            data: user,
+            message: "User found successfully",
+        });
+    } catch (error) {
+        // Xử lý lỗi
+        console.error("Error fetching user by ID:", error);
+        return res.status(500).json({
+            status: "error",
+            message: "An error occurred while fetching the user",
+        });
+    }
+};
+
+
 
 
 // exports.getAll
 
 exports.getFriends = async (req, res) => {
     const this_user = await User.findById(req.user._id).populate("friends",
-        "_id firstName lastName",
+        "_id firstName lastName username",
     );
     res.status(200).json({
         status: "success",
         data: this_user.friends,
         message: "Friend found successfully"
     });
+}
+exports.getFriendsById = async (req, res) => {
+    const { id } = req.params;
+    const userid = new mongoose.Types.ObjectId(id);
+    const this_user = await User.findById(userid).populate("friends",
+        "_id firstName lastName username avatar",
+    );
+    res.status(200).json({
+        status: "success",
+        data: this_user.friends,
+        message: "Friend found successfully"
+    });
+}
+
+exports.removeToken = async (req, res, next) => {
+    const { id } = req.params;
+    if (!id) {
+        res.status(400).json({
+            status: "failed",
+            message: "id is null!",
+        });
+    }
+    try {
+        const userId = new mongoose.Types.ObjectId(id);
+        const user = await User.findByIdAndUpdate(userId,
+            { token: "" }, // Đảm bảo truyền giá trị mới cho `token`
+            { new: true }
+        )
+        await user.save();
+        res.status(200).json({
+            status: "success",
+            message: "Remove successfully!",
+            data: user,
+        });
+    } catch (error) {
+        res.status(401).json({
+            status: "failed",
+            message: error,
+            data: user,
+        });
+    }
+
 }
 
 exports.getRequest = async (req, res) => {
@@ -93,6 +177,75 @@ exports.getRequest = async (req, res) => {
         return res.status(200).json({
             status: "success",
             data: requests,
+            message: "Request found successfully"
+        });
+    } catch (error) {
+        console.error("Error fetching friend requests:", error);
+        res.status(500).json({
+            status: "error",
+            message: "Could not fetch friend requests"
+        });
+    }
+};
+
+// const statusFollow = asyncHandler(async (req, res) => {
+//     const { id, fid } = req.query;
+//     try {
+//         // console.log(id, fid);
+//         const user = await User.findById(id);
+//         if (!user) return res.status(404).json({ mes: 'User not found' });
+//         if (!user.followsCountArr.includes(fid)) return res.status(200).json({ success: false, mes: 'This account is not followed yet.' });
+//         return res.status(200).json({
+//             success: true,
+//             mes: 'This account was followed'
+//         })
+//     } catch (error) {
+//         console.log('error at status follow ' + error);
+//     }
+// })
+
+exports.getArrayFollower = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = new mongoose.Types.ObjectId(id);
+
+        // Truy vấn FriendRequest với recipient là userId
+        const requests = await FriendRequest.find({ recipient: userId })
+            .populate("sender", "firstName lastName username avatar")
+            .select("_id sender recipient createdAt");
+
+        // console.log("Friend requests found:", requests);
+
+        return res.status(200).json({
+            status: "success",
+            data: requests,
+            count: requests.length,
+            message: "Request found successfully"
+        });
+    } catch (error) {
+        console.error("Error fetching friend requests:", error);
+        res.status(500).json({
+            status: "error",
+            message: "Could not fetch friend requests"
+        });
+    }
+};
+exports.getArrayFollowing = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userId = new mongoose.Types.ObjectId(id);
+
+        // Truy vấn FriendRequest với recipient là userId
+        const requests = await FriendRequest.find({ sender: userId })
+            .populate("recipient", "firstName lastName username verified avatar")
+            .select("_id sender recipient createdAt");
+
+        // console.log("Friend requests found:", requests);
+
+        return res.status(200).json({
+            status: "success",
+            data: requests,
+            count: requests.length,
             message: "Request found successfully"
         });
     } catch (error) {
