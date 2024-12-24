@@ -5,11 +5,12 @@ const mongoose = require('mongoose'); // Erase if already required
 var postSchema = new mongoose.Schema({
   id: {
     type: String,
-    required: true,
+    // required: true,
   },
   type: {
     type: String,
     required: true,
+    default: 'Sidecar'
   },
   shortCode: {
     type: String,
@@ -32,18 +33,21 @@ var postSchema = new mongoose.Schema({
   },
   commentsCount: {
     type: Number,
-    require: true
+    require: true,
+    default: 0
   },
   comments: [{
     id: { type: String, ref: 'Comment' }
   }],
   dimensionsHeight: {
     type: Number,
-    require: true
+    require: true,
+    default: 600
   },
   dimensionsWidth: {
     type: Number,
-    require: true
+    require: true,
+    default: 560
   },
   displayUrl: {
     type: String,
@@ -59,10 +63,11 @@ var postSchema = new mongoose.Schema({
   },
   likesCount: {
     type: Number,
+    default: 0
   },
   timestamp: {
     type: String,
-    require: true
+    // require: true
   },
   videoViewCount: {
     type: Number,

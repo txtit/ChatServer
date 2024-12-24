@@ -3,6 +3,7 @@ const Post = require('../models/post')
 const Comment = require('../models/comment');
 const User = require('../models/user');
 const { default: mongoose } = require('mongoose');
+const { generateShortCode } = require('../utils/contansts');
 
 const getPosts = asyncHandler(async (req, res) => {
     const { page = 1, limit = 5 } = req.query;
@@ -131,12 +132,51 @@ const addCommentPost = asyncHandler(async (req, res) => {
     }
 });
 
+const createPost = asyncHandler(async (req, res) => {
+    const { caption, username } = req.body;
+    const images = req.files?.images?.map(el => el.path)
+    const shortCode = generateShortCode();
+    const url = 'https://www.instagram.com/p/' + shortCode + '/';
+    if (images) req.body.images = images
+    const user = await User.findOne({ username });
+    if (!user) {
+        return res.status(404).json({ mes: 'User not found' })
+    }
+    const response = await Post.create({
+        shortCode,
+        caption,
+        url,
+        images,
+        ownerFullName: user.ownerFullName,
+        ownerUsername: user.username
+    });
+    return res.status(200).json({
+        success: response ? true : false,
+        mes: response ? 'Create new post successfully' : 'Something went wrongs',
+        response
+    });
+})
 
-
+const getPostsByuid = asyncHandler(async (req, res) => {
+    const { uid } = req.params;
+    console.log(uid)
+    const user = await User.findById(uid);
+    if (!user) {
+        return res.status(404).json({ mes: 'User not found' })
+    }
+    const response = await Post.find({ ownerUsername: user.username });
+    return res.status(200).json({
+        success: response ? true : false,
+        mes: response ? 'getPostsByuid successfully' : 'Something went wrong!',
+        response
+    })
+})
 module.exports = {
     getPosts,
     getCurentPost,
     getCommentInPost,
     likePost,
-    addCommentPost
+    addCommentPost,
+    createPost,
+    getPostsByuid
 }
