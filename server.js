@@ -23,8 +23,7 @@ const FriendRequest = require("./models/friendRequest");
 const OneToOneMessage = require("./models/OneToOneMessage");
 const VideoCall = require("./models/videoCall");
 const AudioCall = require("./models/audioCall");
-const uploadCloud = require("./config/cloudinary.config");
-const multer = require("multer");
+
 const io = new Server(server, {
     cors: {
         origin: [
@@ -34,8 +33,7 @@ const io = new Server(server, {
         methos: ["GET", "POST", "PUT"],
     },
 });
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+
 
 
 
@@ -387,65 +385,18 @@ io.on("connection", async (socket) => {
         }
     });
 
-    socket.on("file_message", async (data) => {
-        // Xử lý tin nhắn với hình ảnh
-        console.log(data)
-        try {
-            const { message, conversation_id, from, to, type, image } = data;
-
-            // Upload hình ảnh lên Cloudinary
-            const uploadResponse = await cloudinary.uploader.upload(image, {
-                folder: "chat_images", // Tạo thư mục "chat_images" trên Cloudinary
-                resource_type: "auto"
-            });
-
-            // Lấy URL của hình ảnh
-            const imageUrl = uploadResponse.secure_url;
-
-            // Tạo tin nhắn mới
-            const new_message = {
-                to: to,
-                from: from,
-                created_at: Date.now(),
-                text: message,
-                type: type,
-                preview: data.preview,
-                imageUrl: imageUrl // Lưu URL hình ảnh
-            };
-
-            // Lấy cuộc trò chuyện hiện tại hoặc tạo mới nếu không tồn tại
-            let chat = await OneToOneMessage.findOne({
-                participants: { $size: 2, $all: [to, from] },
-            });
-            if (!chat) {
-                chat = await OneToOneMessage.create({
-                    participants: [to, from],
-                    messages: []
-                });
-            }
-
-            chat.messages.push(new_message);
-            await chat.save({ new: true, validateModifiedOnly: true });
-
-            // Emit sự kiện gửi tin nhắn cho cả hai người
-            const updated_chat = await OneToOneMessage.findOne({
-                participants: { $all: [to, from] },
-            }).populate("participants", "firstName lastName _id email status");
-
-            io.to(from_user?.socket_id).emit("new message", {
-                conversation_id,
-                updated_chat,
-                message: new_message,
-            });
-            io.to(to_user?.socket_id).emit("new message", {
-                conversation_id,
-                updated_chat,
-                message: new_message,
-            });
-        } catch (err) {
-            console.error("Error handling image message:", err);
-        }
-
+    socket.on("file_message", (data) => {
+        console.log("Received Message", data);
+        //data: {to, from ,text,file}
+        // get the file extension 
+        const filExtension = path.extname(data.file.name);
+        //generate a unique filename 
+        const fileName = `${Date.now()}_${Math.floor(Math.random() * 10000)}${filExtension} `;
+        //upload file to AWS s3
+        // create a new conversatuon if it doesn't exist yet or add new message to the messages list
+        // save to db
+        // emit incoming_message -> to user 
+        // emit outgoing_message -> from user
     })
 
     // handle start_audio_call event
