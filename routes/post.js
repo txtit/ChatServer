@@ -11,5 +11,5 @@ router.post('/commentPost', ctrls.addCommentPost)
 router.post('/create', uploadCloud.fields([
     { name: 'images', maxCount: 10 },
 ]), ctrls.createPost)
-router.get('/getPostsByuid/:uid', ctrls.getPostsByuid)
+router.get('/getPostsByuid/:id', ctrls.getPostsByuid)
 module.exports = router;

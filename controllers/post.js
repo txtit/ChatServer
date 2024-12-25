@@ -4,11 +4,18 @@ const Comment = require('../models/comment');
 const User = require('../models/user');
 const { default: mongoose } = require('mongoose');
 const { generateShortCode } = require('../utils/contansts');
+const sharp = require('sharp');
+const path = require('path');
 
 const getPosts = asyncHandler(async (req, res) => {
     const { page = 1, limit = 5 } = req.query;
     const skip = (page - 1) * limit;
-    const response = await Post.find().skip(skip).limit(Number(limit));
+    // const response = await Post.find().skip(skip).limit(Number(limit));
+    // Thêm sắp xếp theo createdAt giảm dần
+    const response = await Post.find()
+        .sort({ createdAt: -1 }) // Sắp xếp bài viết mới nhất trước
+        .skip(skip)
+        .limit(Number(limit));
     const totalPosts = await Post.countDocuments();
     const hasMore = skip + response.length < totalPosts;
     return res.status(200).json({
@@ -112,6 +119,8 @@ const addCommentPost = asyncHandler(async (req, res) => {
             likesCount: 0,
         });
 
+        console.log(newComment);
+
         // Lưu bình luận vào CSDL
         const savedComment = await newComment.save();
 
@@ -137,7 +146,8 @@ const createPost = asyncHandler(async (req, res) => {
     const images = req.files?.images?.map(el => el.path)
     const shortCode = generateShortCode();
     const url = 'https://www.instagram.com/p/' + shortCode + '/';
-    if (images) req.body.images = images
+    if (images)
+        req.body.images = images
     const user = await User.findOne({ username });
     if (!user) {
         return res.status(404).json({ mes: 'User not found' })
@@ -147,20 +157,25 @@ const createPost = asyncHandler(async (req, res) => {
         caption,
         url,
         images,
-        ownerFullName: user.ownerFullName,
-        ownerUsername: user.username
+        ownerFullName: user.firstName + ' ' + user.lastName,
+        ownerUsername: user.username,
+        ownerId: user._id,
+        ownerAvatar: user.avatar,
     });
+    console.log(response);
     return res.status(200).json({
         success: response ? true : false,
         mes: response ? 'Create new post successfully' : 'Something went wrongs',
         response
     });
+
+
 })
 
 const getPostsByuid = asyncHandler(async (req, res) => {
-    const { uid } = req.params;
-    console.log(uid)
-    const user = await User.findById(uid);
+    const { id } = req.params;
+    console.log(id)
+    const user = await User.findById(id);
     if (!user) {
         return res.status(404).json({ mes: 'User not found' })
     }
@@ -168,7 +183,7 @@ const getPostsByuid = asyncHandler(async (req, res) => {
     return res.status(200).json({
         success: response ? true : false,
         mes: response ? 'getPostsByuid successfully' : 'Something went wrong!',
-        response
+        data: response
     })
 })
 module.exports = {

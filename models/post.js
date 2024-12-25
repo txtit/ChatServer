@@ -84,6 +84,9 @@ var postSchema = new mongoose.Schema({
   ownerUsername: {
     type: String,
   },
+  ownerAvatar: {
+    type: String,
+  },
   ownerId: {
     type: String,
   },

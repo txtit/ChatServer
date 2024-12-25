@@ -41,7 +41,7 @@ exports.getUsers = async (req, res) => {
 
     const all_users = await User.find({
         verified: true
-    }).select("firstName lastName _id username friends");
+    }).select("firstName lastName _id username friends avatar");
 
 
     const this_user = req.user;
