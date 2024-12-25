@@ -50,6 +50,7 @@ exports.getUsers = async (req, res) => {
         lastName: this_user.lastName,
         _id: this_user._id,
         token: this_user.token,
+        avatar: this_user.avatar,
     };
     const remaining_users = all_users.filter(
         (user) =>

@@ -47,6 +47,12 @@ const OneToOneMessageSchema = new mongoose.Schema({
         file: {
             type: String,
         },
+        preview: {
+            type: String,
+        },
+        imageUrl: {
+            type: String // URL của hình ảnh nếu có
+        }
     },
     ],
 
