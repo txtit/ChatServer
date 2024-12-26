@@ -92,9 +92,13 @@ const userSchema = new mongoose.Schema({
         type: mongoose.Types.ObjectId,
         ref: 'Post'
     }],
+    likeCommentId: [{
+        type: mongoose.Types.ObjectId,
+        ref: 'Comment'
+    }],
     token: {
         type: String
-    }
+    },
 });
 
 userSchema.pre("save", async function (next) {

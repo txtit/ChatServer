@@ -80,7 +80,7 @@ exports.getUserById = async (req, res) => {
         }
         const userid = new mongoose.Types.ObjectId(id);
         // Tìm người dùng theo id
-        const user = await User.findById(userid).select("firstName lastName _id verified likePostId email username token arrayUserFollowed avatar ");
+        const user = await User.findById(userid).select("firstName lastName _id verified likePostId likeCommentId email username token arrayUserFollowed avatar ");
 
         // Kiểm tra nếu không tìm thấy người dùng
         if (!user) {
@@ -113,7 +113,7 @@ exports.getUserById = async (req, res) => {
 
 exports.getFriends = async (req, res) => {
     const this_user = await User.findById(req.user._id).populate("friends",
-        "_id firstName lastName username",
+        "_id firstName lastName username avatar",
     );
     res.status(200).json({
         status: "success",
@@ -170,7 +170,7 @@ exports.getRequest = async (req, res) => {
 
         // Truy vấn FriendRequest với recipient là userId
         const requests = await FriendRequest.find({ recipient: userId })
-            .populate("sender", "firstName lastName")
+            .populate("sender", "firstName lastName avatar")
             .select("_id sender recipient createdAt");
 
         // console.log("Friend requests found:", requests);

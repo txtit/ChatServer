@@ -93,6 +93,32 @@ const likePost = asyncHandler(async (req, res) => {
         console.log('error at like post: ' + error)
     }
 })
+const likeComment = asyncHandler(async (req, res) => {
+    const { uid, cid } = req.body;
+    try {
+
+        const user = await User.findById(uid);
+        const comment = await Comment.findById(cid);
+        if (!comment) return res.status(404).json({ mes: 'Post not found' });
+        const hasLike = user.likeCommentId.includes(cid);
+        if (hasLike) {
+            user.likeCommentId = user.likeCommentId.filter(id => id.toString() !== cid);
+            comment.likesCount -= 1;
+            await comment.save();
+            // user.likeCommentId.remove(cid);
+            await user.save();
+            return res.status(200).json({ message: 'Removed comment like successfully', comment });
+        } else {
+            user.likeCommentId.push(cid);
+            comment.likesCount += 1;
+            await comment.save();
+            await user.save();
+            return res.status(200).json({ mes: 'Liked comment successfully', comment });
+        }
+    } catch (error) {
+        console.log('error at like post: ' + error)
+    }
+})
 
 const addCommentPost = asyncHandler(async (req, res) => {
     const { pid, text, ownerUsername, ownerProfilePicUrl, ownerId } = req.body;
@@ -186,6 +212,21 @@ const getPostsByuid = asyncHandler(async (req, res) => {
         data: response
     })
 })
+
+const getPostsByShortCode = asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    console.log(id)
+    const post = await Post.findOne({ shortCode: id });
+    if (!post) {
+        return res.status(404).json({ mes: 'Post not found' })
+    }
+
+    return res.status(200).json({
+        success: post ? true : false,
+        mes: post ? 'getPostsByShortCode successfully' : 'Something went wrong!',
+        data: post
+    })
+})
 module.exports = {
     getPosts,
     getCurentPost,
@@ -193,5 +234,8 @@ module.exports = {
     likePost,
     addCommentPost,
     createPost,
-    getPostsByuid
+    getPostsByuid,
+    getPostsByShortCode,
+    likeComment
+
 }

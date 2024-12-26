@@ -7,9 +7,12 @@ router.get('/getPosts', ctrls.getPosts)
 router.get('/getCurrentPost/', ctrls.getCurentPost)
 router.get('/getCommentInPost/:pid', ctrls.getCommentInPost)
 router.put('/likePost', ctrls.likePost)
+router.put('/likeComment', ctrls.likeComment)
+
 router.post('/commentPost', ctrls.addCommentPost)
 router.post('/create', uploadCloud.fields([
     { name: 'images', maxCount: 10 },
 ]), ctrls.createPost)
 router.get('/getPostsByuid/:id', ctrls.getPostsByuid)
+router.get('/getPostsByShortCode/:id', ctrls.getPostsByShortCode)
 module.exports = router;

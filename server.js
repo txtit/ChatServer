@@ -231,7 +231,7 @@ io.on("connection", async (socket) => {
 
             new_chat = await OneToOneMessage.findById(new_chat).populate(
                 "participants",
-                "firstName lastName _id email status"
+                "firstName lastName _id email status "
             );
             console.log(exitsting_conversations[0], 'Exustubg Conversation');
 
