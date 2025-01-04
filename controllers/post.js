@@ -188,15 +188,57 @@ const createPost = asyncHandler(async (req, res) => {
         ownerId: user._id,
         ownerAvatar: user.avatar,
     });
-    console.log(response);
+    // console.log(response);
     return res.status(200).json({
         success: response ? true : false,
         mes: response ? 'Create new post successfully' : 'Something went wrongs',
         response
     });
-
-
 })
+
+//upload images 
+const uploadImages = asyncHandler(async (req, res) => {
+    try {
+        // Check if files are present
+        if (!req.files || !req.files.images) {
+            return res.status(400).json({ success: false, mes: 'No images uploaded' });
+        }
+
+        // Extract Cloudinary paths from uploaded files
+        const imageUrls = req.files.images.map(file => file.path);
+
+        // Return response with the array of image URLs
+        return res.status(200).json({
+            success: true,
+            images: imageUrls,
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, mes: 'Error uploading images', error });
+    }
+});
+
+// API upload hình ảnh
+const uploadImagesMessage = asyncHandler(async (req, res) => {
+    try {
+        // Kiểm tra xem có file nào không
+        if (!req.files || !req.files.images) {
+            return res.status(400).json({ success: false, mes: "No images uploaded" });
+        }
+
+        // Trích xuất các đường dẫn hình ảnh từ các file đã tải lên
+        const imageUrls = req.files.images.map((file) => file.path);
+
+        // Trả về danh sách URL của hình ảnh từ Cloudinary
+        return res.status(200).json({
+            success: true,
+            images: imageUrls,
+        });
+    } catch (error) {
+        console.error(error);
+        return res.status(500).json({ success: false, mes: "Error uploading images", error });
+    }
+});
 
 const getPostsByuid = asyncHandler(async (req, res) => {
     const { id } = req.params;
@@ -236,6 +278,7 @@ module.exports = {
     createPost,
     getPostsByuid,
     getPostsByShortCode,
-    likeComment
-
+    likeComment,
+    uploadImages,
+    uploadImagesMessage
 }

@@ -13,6 +13,13 @@ router.post('/commentPost', ctrls.addCommentPost)
 router.post('/create', uploadCloud.fields([
     { name: 'images', maxCount: 10 },
 ]), ctrls.createPost)
+router.post('/upload-images', uploadCloud.fields([
+    { name: 'images', maxCount: 10 },
+]), ctrls.uploadImages),
+router.post('/upload-images-mes', uploadCloud.fields([
+    { name: 'images', maxCount: 10 },
+]), ctrls.uploadImages)
+
 router.get('/getPostsByuid/:id', ctrls.getPostsByuid)
 router.get('/getPostsByShortCode/:id', ctrls.getPostsByShortCode)
 module.exports = router;

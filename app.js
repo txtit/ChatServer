@@ -2,7 +2,9 @@ const express = require("express"); // web framework for Node.js.
 const morgan = require("morgan"); // HTTP request logger middleware for node.js
 
 const routes = require("./routes/index");
-
+const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const rateLimit = require("express-rate-limit"); // Basic rate-limiting middleware for Express. Use to limit repeated requests to public APIs and/or endpoints such as password reset.
 const helmet = require("helmet"); // Helmet helps you secure your Express apps by setting various HTTP headers. It's not a silver bullet, but it can help!
 
@@ -56,7 +58,34 @@ app.use(
     //   Access-Control-Allow-Credentials is a header that, when set to true , tells browsers to expose the response to the frontend JavaScript code. The credentials consist of cookies, authorization headers, and TLS client certificates.
   })
 );
+// Cấu hình Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_NAME,
+  api_key: process.env.CLOUDINARY_KEY,
+  api_secret: process.env.CLOUDINARY_SECRET
+});
 
+// Cấu hình multer với Cloudinary
+const storage = new CloudinaryStorage({
+  cloudinary,
+  allowedFormats: ['jpg', 'png'],
+  params: {
+    folder: 'chat_images',
+    resource_type: 'auto'
+  }
+});
+
+const uploadCloud = multer({ storage });
+
+// Tạo route để upload file
+app.post('/upload', uploadCloud.single('file'), (req, res) => {
+  if (req.file) {
+    const imageUrl = req.file.secure_url;
+    return res.json({ success: true, imageUrl: imageUrl });
+  } else {
+    return res.status(400).json({ success: false, error: 'Không có file nào được tải lên' });
+  }
+});
 app.use(cookieParser());
 
 // Setup express response and body parser configurations

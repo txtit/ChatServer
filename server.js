@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const dotenv = require("dotenv");
 dotenv.config({ path: "./config.env" });
+const cors = require('cors');
 
 const path = require("path");
 
@@ -23,8 +24,9 @@ const FriendRequest = require("./models/friendRequest");
 const OneToOneMessage = require("./models/OneToOneMessage");
 const VideoCall = require("./models/videoCall");
 const AudioCall = require("./models/audioCall");
-const uploadCloud = require("./config/cloudinary.config");
-const multer = require("multer");
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const multer = require('multer');
 const io = new Server(server, {
     cors: {
         origin: [
@@ -32,13 +34,37 @@ const io = new Server(server, {
             "http://localhost:5173"
         ],
         methos: ["GET", "POST", "PUT"],
+        credentials: true
     },
 });
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
+
+app.use(cors({
+    origin: [
+        "http://localhost:3001",
+        "http://localhost:5173"
+    ],
+    methods: ["GET", "POST", "PUT"],
+    credentials: true
+}))
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_NAME,
+    api_key: process.env.CLOUDINARY_KEY,
+    api_secret: process.env.CLOUDINARY_SECRET
+});
 
 
-
+// Storage setup for Cloudinary
+const storage = new CloudinaryStorage({
+    cloudinary,
+    allowedFormats: ['jpg', 'png'],
+    params: {
+        folder: 'chat_images',
+        resource_type: 'auto' // This handles all media types (images, videos, etc.)
+    }
+});
+// Multer upload middleware
+const uploadCloud = multer({ storage });
 
 
 const DB = process.env.DATABASE.replace(
@@ -358,7 +384,8 @@ io.on("connection", async (socket) => {
                 created_at: Date.now(),
                 text: message,
                 type: data.type,
-                preview: data.preview
+                preview: data.preview,
+                imageUrl: data.imageUrl
 
             }
             console.log("chattttttttttttttt", new_message);
@@ -386,37 +413,80 @@ io.on("connection", async (socket) => {
             console.error("Error handling text message:", error);
         }
     });
+    socket.on("delete_message", async (data) => {
+        // data: {to, from, id} là thông tin để xóa tin nhắn
+        const { to, from, id } = data;
+        const messageId = new mongoose.Types.ObjectId(id);
+        console.log("Received message ID:", messageId);
 
-    socket.on("file_message", async (data) => {
-        // Xử lý tin nhắn với hình ảnh
-        console.log(data)
         try {
-            const { message, conversation_id, from, to, type, image } = data;
+            // Tìm cuộc trò chuyện với 2 người tham gia
+            const existing_conversations = await OneToOneMessage.find({
+                participants: { $size: 2, $all: [to, from] },
+            }).populate("participants", "firstName lastName _id email status");
 
-            // Upload hình ảnh lên Cloudinary
-            const uploadResponse = await cloudinary.uploader.upload(image, {
-                folder: "chat_images", // Tạo thư mục "chat_images" trên Cloudinary
-                resource_type: "auto"
-            });
+            if (!existing_conversations || existing_conversations.length === 0) {
+                return socket.emit("delete_chat_fail", { message: "Conversation not found" });
+            }
 
-            // Lấy URL của hình ảnh
-            const imageUrl = uploadResponse.secure_url;
+            // Lấy id của cuộc trò chuyện đầu tiên tìm được
+            const conversationId = existing_conversations[0]._id;
+            const conversation = await OneToOneMessage.findById(conversationId).populate("messages");
 
-            // Tạo tin nhắn mới
+            if (!conversation) {
+                return socket.emit("delete_chat_fail", { message: "Conversation not found" });
+            }
+
+            // Tìm index của tin nhắn cần xóa trong mảng messages
+            const messageIndex = conversation.messages.findIndex(msg => msg._id.toString() === messageId.toString());
+            console.log("Message index:", messageIndex);
+
+            if (messageIndex === -1) {
+                return socket.emit("delete_chat_fail", { message: "Message not found" });
+            } else {
+                // Xóa tin nhắn và lưu vào biến deletedMessage
+                const deletedMessage = conversation.messages.splice(messageIndex, 1)[0];
+                console.log("Tin nhắn đã xóa:", deletedMessage);
+
+                // Lưu lại cuộc trò chuyện sau khi xóa tin nhắn
+                await conversation.save({ new: true, validateModifiedOnly: true });
+
+                // Phát tán sự kiện thông báo xóa tin nhắn cho người gửi và người nhận
+                const from_user = await User.findById(from); // Lấy thông tin người gửi
+                const to_user = await User.findById(to); // Lấy thông tin người nhận
+
+                io.to(from_user.socket_id).emit("message_deleted", {
+                    message: "Tin nhắn đã được xóa"
+                });
+                io.to(to_user.socket_id).emit("message_deleted", {
+                    message: "Tin nhắn đã được xóa"
+                });
+            }
+        } catch (err) {
+            console.error("Lỗi khi xóa tin nhắn:", err);
+            socket.emit("delete_chat_fail", { message: "Có lỗi xảy ra khi xóa tin nhắn" });
+        }
+    });
+
+
+    socket.on('file_message', async (data) => {
+        try {
+            const { message, conversation_id, from, to, type, imageUrl } = data;
+
+            // Tiến hành xử lý tin nhắn và lưu thông tin vào cơ sở dữ liệu (giống như mã trước đó)
             const new_message = {
                 to: to,
                 from: from,
                 created_at: Date.now(),
                 text: message,
                 type: type,
-                preview: data.preview,
-                imageUrl: imageUrl // Lưu URL hình ảnh
+                imageUrl: imageUrl // Sử dụng URL hình ảnh đã upload
             };
 
-            // Lấy cuộc trò chuyện hiện tại hoặc tạo mới nếu không tồn tại
             let chat = await OneToOneMessage.findOne({
                 participants: { $size: 2, $all: [to, from] },
             });
+
             if (!chat) {
                 chat = await OneToOneMessage.create({
                     participants: [to, from],
@@ -427,26 +497,26 @@ io.on("connection", async (socket) => {
             chat.messages.push(new_message);
             await chat.save({ new: true, validateModifiedOnly: true });
 
-            // Emit sự kiện gửi tin nhắn cho cả hai người
             const updated_chat = await OneToOneMessage.findOne({
                 participants: { $all: [to, from] },
             }).populate("participants", "firstName lastName _id email status");
 
-            io.to(from_user?.socket_id).emit("new message", {
+            io.to(from_user?.socket_id).emit('new message', {
                 conversation_id,
                 updated_chat,
-                message: new_message,
+                message: new_message
             });
-            io.to(to_user?.socket_id).emit("new message", {
-                conversation_id,
-                updated_chat,
-                message: new_message,
-            });
-        } catch (err) {
-            console.error("Error handling image message:", err);
-        }
 
-    })
+            io.to(to_user?.socket_id).emit('new message', {
+                conversation_id,
+                updated_chat,
+                message: new_message
+            });
+
+        } catch (err) {
+            console.error("Lỗi xử lý tin nhắn hình ảnh:", err);
+        }
+    });
 
     // handle start_audio_call event
     socket.on("start_audio_call", async (data) => {
