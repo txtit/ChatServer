@@ -112,13 +112,16 @@ io.on("connection", async (socket) => {
             //     return callback({ message: "Friend request already sent" });
             // }
 
-            const to = await User.findById(data.to).select("socket_id");
+            const to = await User.findById(data.to).select("socket_id username");
             const from = await User.findById(data.from).select("socket_id arrayUserFollowed");
 
             if (to?.socket_id) {
                 io.to(to.socket_id).emit("new_friend_request", {
                     message: "New friend request received",
+                    to: to
                 });
+                console.log("New friend request received")
+
             }
 
             if (from?.socket_id) {
@@ -126,6 +129,8 @@ io.on("connection", async (socket) => {
                     message: "Request send successfully",
                     to: to
                 });
+                console.log("Request send successfully")
+
             }
 
             if (!from.arrayUserFollowed.includes(to._id)) {

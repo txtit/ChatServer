@@ -6,6 +6,8 @@ const AudioCall = require("../models/audioCall");
 const VideoCall = require("../models/videoCall");
 
 const { generateToken04 } = require("./zegoServerAssistant");
+const Post = require("../models/post");
+const Comment = require("../models/comment");
 
 // Please change appID to your appId, appid is a number
 // Example: 1234567890
@@ -264,11 +266,33 @@ exports.updateUser = async (req, res) => {
     if (req?.file) {
         data.avatar = req?.file.path;
     }
-    console.log(_id, req.file)
     if (!_id || Object.keys(req.body).length === 0) throw new Error('Missing inputs');
     const response = await User.findByIdAndUpdate(_id, data, { new: true }).select('-password')
+    const post = await Post.find({ ownerId: _id })
+    const comment = await Comment.find({ ownerId: _id })
+    if (!comment) {
+        return res.status(404).json({ error: "Comment not found" });
+    }
+
+    if (!post) {
+        return res.status(404).json({ error: "Post not found" });
+    }
+    if (!req.file || !req.file.path) {
+        return res.status(400).json({ error: "File upload failed or path is missing" });
+    }
+    post.ownerAvatar = req?.file.path;
+    // Update `ownerAvatar` for each post in the array
+    for (const posts of post) {
+        posts.ownerAvatar = req.file.path;
+        await posts.save();
+    }
+    for (const posts of comment) {
+        posts.ownerProfilePicUrl = req.file.path;
+        await posts.save();
+    }
     return res.status(200).json({
         success: response ? true : false,
+        data: post,
         mes: response ? 'Updated user successfully' : 'Update user failed'
     })
 }
