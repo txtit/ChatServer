@@ -1,8 +1,8 @@
+const uploader = require('../config/cloudinary.config')
 const router = require("express").Router();
 
 const userController = require("../controllers/user");
 const authController = require("../controllers/auth");
-const uploadCloud = require("../config/cloudinary.config");
 
 router.patch("/update-me", authController.protect, userController.updateMe);
 router.get("/get-users", authController.protect, userController.getUsers);
@@ -13,6 +13,7 @@ router.get("/get-request-friends", authController.protect, userController.getReq
 router.get("/get-follower/:id", authController.protect, userController.getArrayFollower);
 router.get("/get-following/:id", authController.protect, userController.getArrayFollowing);
 router.put("/remove-token/:id", userController.removeToken);
+router.put("/current/:_id", uploader.single('avatar'), userController.updateUser)
 
 
 router.post("/start-audio-call", authController.protect, userController.startAudioCall);

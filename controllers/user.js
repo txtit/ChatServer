@@ -258,6 +258,21 @@ exports.getArrayFollowing = async (req, res) => {
     }
 };
 
+exports.updateUser = async (req, res) => {
+    const _id = req.params;
+    const data = req.body;
+    if (req?.file) {
+        data.avatar = req?.file.path;
+    }
+    console.log(_id, req.file)
+    if (!_id || Object.keys(req.body).length === 0) throw new Error('Missing inputs');
+    const response = await User.findByIdAndUpdate(_id, data, { new: true }).select('-password')
+    return res.status(200).json({
+        success: response ? true : false,
+        mes: response ? 'Updated user successfully' : 'Update user failed'
+    })
+}
+
 /**
  * Authorization authentication token generation
  */
