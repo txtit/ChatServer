@@ -1,9 +1,9 @@
 const { verify } = require("jsonwebtoken");
-const User = require("../models/user");
-const FriendRequest = require("../models/friendRequest");
+const User = require("../models/user/user");
+const FriendRequest = require("../models/post/friendRequest");
 const { default: mongoose } = require("mongoose");
-const AudioCall = require("../models/audioCall");
-const VideoCall = require("../models/videoCall");
+const AudioCall = require("../models/mess/audioCall");
+const VideoCall = require("../models/mess/videoCall");
 
 const { generateToken04 } = require("./zegoServerAssistant");
 

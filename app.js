@@ -21,7 +21,7 @@ const helmet = require("helmet"); // Helmet helps you secure your Express apps b
 // X-Frame-Options: SAMEORIGIN
 // X-Permitted-Cross-Domain-Policies: none
 // X-XSS-Protection: 0
-
+const path = require('path');
 const mongosanitize = require("express-mongo-sanitize"); // This module searches for any keys in objects that begin with a $ sign or contain a ., from req.body, req.query or req.params.
 
 // By default, $ and . characters are removed completely from user-supplied input in the following places:
@@ -97,7 +97,8 @@ app.use(
 ); // Returns middleware that only parses urlencoded bodies
 
 app.use(mongosanitize());
-
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
 app.use(xss());
 
 app.use(routes);

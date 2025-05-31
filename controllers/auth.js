@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const filterObj = require("../utils/filterObj");
 
 // Model
-const User = require("../models/user");
+const User = require("../models/user/user");
 // const otp = require("../Templates/Mail/otp");
 const resetPassword = require("../Templates/Mail/resetPassword");
 const { promisify } = require("util");

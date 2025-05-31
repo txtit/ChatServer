@@ -2,7 +2,7 @@
 const {
   Model
 } = require('sequelize');
-const { enumData } = require('../utils/contansts');
+const { enumData } = require('../../utils/contansts');
 module.exports = (sequelize, DataTypes) => {
   class Notification extends Model {
     /**

@@ -1,7 +1,7 @@
 const asyncHandler = require('express-async-handler')
-const Post = require('../models/post')
-const Comment = require('../models/comment');
-const User = require('../models/user');
+const Post = require('../models/post/post')
+const Comment = require('../models/post/comment');
+const User = require('../models//user/user');
 const { default: mongoose } = require('mongoose');
 const { generateShortCode } = require('../utils/contansts');
 const sharp = require('sharp');

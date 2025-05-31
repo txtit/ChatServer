@@ -1,8 +1,8 @@
-const User = require('../models/user')
-const ChildPost = require('../models/childPost')
-const Replie = require('../models/replie')
-const Comment = require('../models/comment')
-const Post = require('../models/post')
+const User = require('../models/user/user')
+const ChildPost = require('../models/post/childPost')
+const Replie = require('../models/post/replie')
+const Comment = require('../models/post/comment')
+const Post = require('../models/post/post')
 const data_posts = require('../scrape_data/dataset_instagram-scraper_posts.json')
 const asyncHandler = require('express-async-handler')
 

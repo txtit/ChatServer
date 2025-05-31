@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title><%= slides.title %></title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.3.1/dist/reveal.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4.3.1/dist/theme/white.min.css">
+    <style>
+        .slides { font-family: 'Arial', sans-serif; }
+        .slide-content { display: flex; justify-content: space-between; }
+        .slide-text { width: 60%; }
+        .slide-image { 
+            width: 35%; 
+            height: 250px; 
+            background-color: #f5f5f5; 
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        ul li { margin-bottom: 10px; }
+        .title-slide { text-align: center; }
+        .controls-wrapper {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .btn-primary { background-color: #007bff; color: white; }
+        .btn-secondary { background-color: #6c757d; color: white; }
+    </style>
+</head>
+<body>
+    <div class="controls-wrapper">
+        <button id="downloadPPTX" class="btn-primary">Tải xuống PPTX</button>
+        <button id="fullscreen" class="btn-secondary">Toàn màn hình</button>
+    </div>
+
+    <div class="reveal">
+        <div class="slides">
+            <!-- Slide tiêu đề -->
+            <section class="title-slide">
+                <h1><%= slides.title %></h1>
+                <h3><%= slides.subjectGrade %></h3>
+            </section>
+
+            <!-- Các slide nội dung -->
+            <% slides.slides.forEach(function(slide) { %>
+                <section class="<%= slide.type %>-slide">
+                    <h2><%= slide.title %></h2>
+                    <div class="slide-content">
+                        <div class="slide-text">
+                            <ul>
+                                <% slide.content.forEach(function(item) { %>
+                                    <li><%= item %></li>
+                                <% }); %>
+                            </ul>
+                        </div>
+                        <div class="slide-image">
+                            <p><%= slide.imagePrompt %></p>
+                        </div>
+                    </div>
+                </section>
+            <% }); %>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/reveal.js@4.3.1/dist/reveal.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    
+    <script>
+        // Khởi tạo RevealJS
+        Reveal.initialize({
+            controls: true,
+            progress: true,
+            hash: true,
+            center: true
+        });
+
+        // Tạo và tải xuống PPTX
+        document.getElementById('downloadPPTX').addEventListener('click', function() {
+            const slidesData = <%- JSON.stringify(slides) %>;
+            createAndDownloadPPTX(slidesData);
+        });
+
+        // Hàm tạo PPTX
+        function createAndDownloadPPTX(slidesData) {
+            const pptx = new PptxGenJS();
+            
+            // Slide tiêu đề
+            let slide = pptx.addSlide();
+            slide.addText(slidesData.title, { 
+                x: 1, y: 1.5, w: '90%', h: 1.5,
+                fontSize: 40, color: '0088CC', bold: true, align: 'center'
+            });
+            slide.addText(slidesData.subjectGrade, {
+                x: 1, y: 3, w: '90%', h: 0.6,
+                fontSize: 24, color: '666666', align: 'center'
+            });
+            
+            // Các slide nội dung
+            slidesData.slides.forEach(slideData => {
+                slide = pptx.addSlide();
+                
+                // Thêm tiêu đề
+                slide.addText(slideData.title, {
+                    x: 0.5, y: 0.5, w: '95%', h: 0.8,
+                    fontSize: 28, color: '0088CC', bold: true
+                });
+                
+                // Thêm các điểm nội dung
+                const bulletPoints = slideData.content.map(item => ({ text: item }));
+                slide.addText(bulletPoints, {
+                    x: 0.5, y: 1.5, w: '60%', h: 4,
+                    fontSize: 18, color: '333333',
+                    bullet: { type: 'bullet' }
+                });
+                
+                // Thêm placeholder cho hình ảnh
+                slide.addText(slideData.imagePrompt || "Hình ảnh minh họa", {
+                    x: 7, y: 2, w: 3, h: 2.5,
+                    fontSize: 12, color: '9f9f9f',
+                    align: 'center', valign: 'middle',
+                    fill: { color: 'f2f2f2' }
+                });
+            });
+            
+            // Xuất file
+            pptx.writeFile({ fileName: `${slidesData.title.replace(/\s+/g, '_')}.pptx` });
+        }
+
+        // Chế độ toàn màn hình
+        document.getElementById('fullscreen').addEventListener('click', function() {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            }
+        });
+    </script>
+</body>
+</html>
