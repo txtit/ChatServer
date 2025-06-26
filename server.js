@@ -306,7 +306,7 @@ io.on("connection", async (socket) => {
 
     socket.on("get_messages", async (data, callback) => {
         try {
-            console.log("dâtnek", data)
+            // console.log("dâtnek", data)
             const conversation = await OneToOneMessage.findById(data.conversation_id);
 
             if (!conversation) {
@@ -396,14 +396,90 @@ io.on("connection", async (socket) => {
         }
     });
 
+    // Handle delete message
+    socket.on("delete_message", async (data) => {
+        try {
+            console.log("Delete Message Request", data);
+            // data: {to, from, id}
+            const { to, from, id } = data;
+
+            const to_user = await User.findById(to);
+            const from_user = await User.findById(from);
+
+            // Tìm cuộc trò chuyện
+            const chat = await OneToOneMessage.findOne({
+                participants: { $size: 2, $all: [to, from] },
+            });
+
+
+            if (!chat) {
+                return socket.emit("delete_message_error", {
+                    message: "Conversation not found"
+                });
+            }
+            console.log("Chat found:", chat.messages.length, "messages");
+            console.log("Looking for message ID:", id);
+            console.log("Available message IDs:", chat.messages.map(msg => msg._id.toString()));
+
+            // Tìm tin nhắn cần xóa
+            const messageIndex = chat.messages.findIndex(msg => msg._id.toString() === id);
+            if (messageIndex === -1) {
+                console.log("Message not found with ID:", id);
+
+                return socket.emit("delete_message_error", {
+                    message: "Message not found"
+
+                });
+            }
+
+            console.log("Found message at index:", messageIndex);
+            console.log("Message from:", chat.messages[messageIndex].from.toString());
+            console.log("Request from:", from);
+
+            // Kiểm tra xem người xóa có phải là người gửi tin nhắn không
+            if (chat.messages[messageIndex].from.toString() !== from.toString()) {
+
+                return socket.emit("delete_message_error", {
+                    message: "Bạn chỉ có thế xóa tin nhắn của mình"
+                });
+            }            // Xóa hoàn toàn tin nhắn khỏi mảng messages
+            console.log("Before delete - Messages count:", chat.messages.length);
+            console.log("Deleting message at index:", messageIndex);
+            chat.messages.splice(messageIndex, 1);
+            console.log("After delete - Messages count:", chat.messages.length);
+
+            await chat.save({ new: true, validateModifiedOnly: true });
+            console.log("Chat saved successfully");
+
+            // Lấy cuộc trò chuyện đã cập nhật
+            const updated_chat = await OneToOneMessage.findOne({
+                participants: { $all: [to, from] },
+            }).populate("participants", "firstName lastName _id email status");
+
+            // Emit sự kiện đến cả hai người dùng
+            const delete_response = {
+                conversation_id: chat._id,
+                message_id: id,
+                updated_chat
+            };
+
+            io.to(from_user?.socket_id).emit("message_deleted", delete_response);
+            io.to(to_user?.socket_id).emit("message_deleted", delete_response);
+
+        } catch (error) {
+            console.error("Error handling delete message:", error);
+            socket.emit("delete_message_error", {
+                message: "lỗi khi xóa tin nhắn"
+            });
+        }
+    });
+
     socket.on("file_message", async (data) => {
         // Xử lý tin nhắn với hình ảnh
         console.log(data)
         try {
-            const { message, conversation_id, from, to, type, image } = data;
-
-            // Upload hình ảnh lên Cloudinary
-            const uploadResponse = await cloudinary.uploader.upload(image, {
+            const { message, conversation_id, from, to, type, image } = data;            // Upload hình ảnh lên Cloudinary
+            const uploadResponse = await uploadCloud.uploader.upload(image, {
                 folder: "chat_images", // Tạo thư mục "chat_images" trên Cloudinary
                 resource_type: "auto"
             });

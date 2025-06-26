@@ -94,7 +94,43 @@ const userSchema = new mongoose.Schema({
     }],
     token: {
         type: String
-    }
+    },    age: { type: Number, min: 6, max: 10 }, // Độ tuổi target
+    grade: { type: String }, // "Lớp 5A", "Lớp 4B"
+    parentEmail: { type: String }, // Email phụ huynh
+    learningLevel: { type: String, enum: ['beginner', 'intermediate', 'advanced'] },
+    totalXP: { type: Number, default: 0 },
+    currentStreak: { type: Number, default: 0 },
+    badges: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Badge' }],
+    
+    // Role và relationships
+    role: { 
+        type: String, 
+        enum: ['student', 'parent', 'teacher', 'admin'], 
+        default: 'student' 
+    },
+    parentIds: [{ 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'User' 
+    }],
+    childrenIds: [{ 
+        type: mongoose.Schema.Types.ObjectId, 
+        ref: 'User' 
+    }],
+    
+    // Weekly goals
+    weeklyGoals: {
+        studyTime: { type: Number, default: 180 }, // phút
+        lessons: { type: Number, default: 3 }
+    },
+    
+    parentalControls: {
+        dailyTimeLimit: { type: Number, default: 60 }, // phút
+        allowedHours: {
+            start: { type: String, default: '08:00' },
+            end: { type: String, default: '20:00' }
+        }
+    },
+    // Thêm các trường khác nếu cần
 });
 
 userSchema.pre("save", async function (next) {

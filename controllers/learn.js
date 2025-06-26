@@ -10,8 +10,12 @@ const LearningPath = require('../models/learn/learningPath'); // Tạo model nà
 const mammoth = require('mammoth'); // Cài đặt: npm install mammoth
 const pdfParse = require('pdf-parse'); // Cài đặt: npm install pdf-parse
 const Slide = require("../models/Slide");
+const openai = require('../config/openai.config');
+const streamifier = require('streamifier');
 // Đảm bảo cloudinary được cấu hình
-
+// Thêm import mới cho Google GenAI
+const { generateImageFromPrompt: genAIImageGenerator } = require('../config/google-genai.config');
+const Progress = require("../models/learn/progress");
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_NAME,
     api_key: process.env.CLOUDINARY_KEY,
@@ -374,11 +378,48 @@ const getSlidesData = async (req, res) => {
                 message: 'Không tìm thấy slide'
             });
         }
+        // Clone content để không ảnh hưởng DB
+        const content = JSON.parse(JSON.stringify(slide.content));
 
+        // Gán id cho từng exercise
+        let exerciseIdMap = {};
+        if (Array.isArray(content.exercises)) {
+            content.exercises = content.exercises.map((ex, idx) => {
+                const exId = ex.id || `ex_${slideId}_${idx + 1}`;
+                exerciseIdMap[idx] = exId;
+                return {
+                    ...ex,
+                    id: exId
+                };
+            });
+        }
+
+        // Gán id cho từng slide và gán exerciseId nếu là slide exercise
+        if (Array.isArray(content.slides)) {
+            content.slides = content.slides.map((s, idx) => {
+                const newId = s.id || `slide_${slideId}_${idx + 1}`;
+                let slideObj = { ...s, id: newId };
+                if (s.type === 'exercise') {
+                    // Gán exerciseId theo thứ tự nếu có exercise tương ứng
+                    if (content.exercises && content.exercises[idx]) {
+                        slideObj.exerciseId = content.exercises[idx].id;
+                    }
+                }
+                return slideObj;
+            });
+        }
+
+        // Gán id cho từng quiz
+        if (Array.isArray(content.quizzes)) {
+            content.quizzes = content.quizzes.map((qz, idx) => ({
+                ...qz,
+                id: qz.id || `quiz_${slideId}_${idx + 1}`
+            }));
+        }
         // Trả về dữ liệu slide dạng JSON
         res.json({
             success: true,
-            slides: slide.content
+            slides: content
         });
 
     } catch (error) {
@@ -687,37 +728,35 @@ async function generateLearningPath(curriculum) {
 // API Cập nhật tiến độ khi hoàn thành bài học
 const updateProgress = async (req, res) => {
     try {
-        const { learningPathId, lessonIndex } = req.body;
-        const userId = req.user.id;
+        const { slideId, completedSlides = [], completedExercises = [], completedQuizzes = [], userId = "guest" } = req.body;
 
-        // Tìm hoặc tạo progress record
-        let progress = await Progress.findOne({ userId, learningPathId });
+        let progress = await Progress.findOne({ userId, slideId });
         if (!progress) {
-            progress = await Progress.create({
-                userId,
-                learningPathId,
-                completedLessons: [],
-                quizResults: [],
-                overallProgress: 0
-            });
+            progress = new Progress({ userId, slideId });
         }
 
-        // Nếu bài học chưa được đánh dấu hoàn thành
-        if (!progress.completedLessons.includes(lessonIndex)) {
-            progress.completedLessons.push(lessonIndex);
-        }
+        // Cập nhật các trường
+        progress.completedSlides = completedSlides;
+        progress.completedExercises = completedExercises;
+        progress.completedQuizzes = completedQuizzes;
 
-        // Tính % hoàn thành
-        const learningPath = await LearningPath.findById(learningPathId);
-        const totalLessons = learningPath.lessons.length;
-        progress.overallProgress = Math.round((progress.completedLessons.length / totalLessons) * 100);
+        // Lấy tổng số slide, bài tập, quiz
+        const slide = await Slide.findById(slideId);
+        const totalSlides = slide.content.slides.length;
+        const totalExercises = slide.content.exercises?.length || 0;
+        const totalQuizzes = slide.content.quizzes?.length || 0;
 
-        // Cập nhật thời gian hoạt động
+        const totalItems = totalSlides + totalExercises + totalQuizzes;
+        const completedItems = completedSlides.length + completedExercises.length + completedQuizzes.length;
+
+        progress.overallProgress = totalItems === 0 ? 0 : Math.round((completedItems / totalItems) * 100);
         progress.lastActivity = new Date();
+
         await progress.save();
 
-        res.status(200).json({ success: true, data: progress });
+        res.json({ success: true, progress });
     } catch (err) {
+        console.log("Lỗi khi cập nhật tiến độ:", err);
         res.status(500).json({ success: false, message: err.message });
     }
 };
@@ -763,7 +802,192 @@ const submitQuiz = async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 };
-// Thêm API endpoint để tạo slide từ giáo án
+
+// Cập nhật hàm generateImageFromPrompt
+async function generateImageFromPrompt(prompt, slideIndex, retryCount = 0) {
+    try {
+        console.log(`Đang tạo hình ảnh cho slide ${slideIndex + 1} với prompt: "${prompt}"`);
+
+        // Cải thiện prompt cho phù hợp với nội dung giáo dục
+        const enhancedPrompt = `${prompt}, phong cách giáo dục, đơn giản, màu sắc tươi sáng, phù hợp cho trẻ em`;
+
+        // Sử dụng hàm từ file cấu hình Google GenAI
+        const imageBase64 = await genAIImageGenerator(enhancedPrompt);
+
+        // Chuyển đổi base64 thành buffer để tải lên Cloudinary
+        const buffer = Buffer.from(imageBase64, 'base64');
+
+        console.log(`✅ Đã nhận được hình ảnh từ Google GenAI, đang tải lên Cloudinary...`);
+
+        // Upload lên Cloudinary để lưu trữ lâu dài
+        const cloudinaryUrl = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'slide-images',
+                    resource_type: 'image'
+                },
+                (error, result) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(result.secure_url);
+                    }
+                }
+            );
+
+            streamifier.createReadStream(buffer).pipe(uploadStream);
+        });
+
+        console.log(`✓ Đã tạo và lưu hình ảnh cho slide ${slideIndex + 1}`);
+        return cloudinaryUrl;
+    } catch (error) {
+        console.error(`❌ Lỗi khi tạo hình ảnh cho slide ${slideIndex + 1}:`, error.message);
+
+        // Thử lại với prompt đơn giản hơn nếu là lần đầu gặp lỗi
+        if (retryCount < 1) {
+            console.log(`⏳ Thử lại với prompt đơn giản hơn...`);
+            // Đơn giản hóa prompt, chỉ lấy phần đầu
+            const simplifiedPrompt = prompt.split(',')[0] + ", educational image";
+
+            // Đợi 2 giây trước khi thử lại
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return generateImageFromPrompt(simplifiedPrompt, slideIndex, retryCount + 1);
+        }
+
+        // Nếu vẫn lỗi, sử dụng hình ảnh placeholder
+        console.log(`⚠️ Không thể tạo hình ảnh, sử dụng hình ảnh placeholder cho slide ${slideIndex + 1}`);
+        return `https://via.placeholder.com/800x600/3498db/ffffff?text=Slide+${slideIndex + 1}`;
+    }
+}
+
+// Không cần thay đổi hàm startCanvaImageGeneration, nó sẽ gọi hàm generateImageFromPrompt đã cập nhật
+
+// Cập nhật hàm startCanvaImageGeneration để sử dụng OpenAI
+async function startCanvaImageGeneration(slideId) {
+    try {
+        // Tìm slide trong database
+        const slide = await Slide.findById(slideId);
+        if (!slide) {
+            console.error("Không tìm thấy slide với ID:", slideId);
+            return;
+        }
+
+
+        // Kiểm tra OpenAI API key
+        if (!process.env.OPENAI_API_KEY) {
+            console.error("Thiếu OpenAI API key trong biến môi trường");
+            slide.imageGenerationStatus = "failed";
+            await slide.save();
+            return;
+        }
+
+        // Kiểm tra kết nối với OpenAI
+        try {
+            console.log("Kiểm tra kết nối OpenAI...");
+            await openai.models.list();
+            console.log("Kết nối OpenAI thành công");
+        } catch (error) {
+            console.error("Không thể kết nối đến OpenAI:", error);
+            slide.imageGenerationStatus = "failed";
+            await slide.save();
+            return;
+        }
+
+        // Cập nhật trạng thái slide
+        slide.imageGenerationStatus = "processing";
+        await slide.save();
+
+        // Ghi log bắt đầu quá trình
+        console.log(`Bắt đầu tạo hình ảnh cho ${slide.content.slides.length} slide`);
+
+        // Giới hạn số lượng slide được tạo hình ảnh để tiết kiệm chi phí
+        const MAX_IMAGES = 10; // Giới hạn số lượng hình ảnh được tạo
+        const slidesToProcess = Math.min(slide.content.slides.length, MAX_IMAGES);
+
+        console.log(`Sẽ tạo hình ảnh cho ${slidesToProcess}/${slide.content.slides.length} slide`);
+
+        // Xử lý tuần tự để tránh vượt quá giới hạn API rate
+        for (let i = 0; i < slidesToProcess; i++) {
+            const currentSlide = slide.content.slides[i];
+
+            // Bỏ qua nếu không có prompt hoặc đã có hình ảnh
+            if (!currentSlide.imagePrompt || currentSlide.imageUrl) {
+                console.log(`Bỏ qua slide ${i + 1}: ${!currentSlide.imagePrompt ? 'Không có prompt' : 'Đã có hình ảnh'}`);
+                continue;
+            }
+
+            try {
+                // Tạo hình ảnh
+                const imageUrl = await generateImageFromPrompt(currentSlide.imagePrompt, i);
+
+                // Lưu URL hình ảnh vào slide
+                if (imageUrl) {
+                    slide.content.slides[i].imageUrl = imageUrl;
+                    // Lưu sau mỗi hình ảnh để tránh mất dữ liệu nếu có lỗi
+                    await slide.save();
+                }
+
+                // Đợi lâu hơn để tránh rate limit (tối thiểu 6 giây giữa các yêu cầu)
+                await new Promise(resolve => setTimeout(resolve, 6000));
+            } catch (error) {
+                console.error(`Lỗi khi tạo hình ảnh cho slide ${i + 1}:`, error);
+                // Tiếp tục với slide tiếp theo nếu có lỗi
+            }
+        }
+
+        // Cập nhật trạng thái và lưu vào database
+        slide.imageGenerationStatus = "completed";
+        await slide.save();
+
+        console.log(`Đã hoàn thành việc tạo hình ảnh cho slide`);
+    } catch (error) {
+        console.error("Lỗi khi tạo hình ảnh tự động:", error);
+    }
+}
+
+// Thêm API endpoint để kiểm tra trạng thái tạo hình ảnh
+const checkImageGenerationStatus = async (req, res) => {
+    try {
+        const { slideId } = req.params;
+
+        // Tìm slide theo ID
+        const slide = await Slide.findById(slideId);
+        if (!slide) {
+            return res.status(404).json({
+                success: false,
+                message: "Không tìm thấy slide"
+            });
+        }
+
+        // Đếm số lượng hình ảnh đã tạo
+        const totalSlides = slide.content.slides.length;
+        let completedImages = 0;
+
+        slide.content.slides.forEach(slideItem => {
+            if (slideItem.imageUrl) completedImages++;
+        });
+
+        // Trả về thông tin trạng thái
+        res.status(200).json({
+            success: true,
+            status: slide.imageGenerationStatus,
+            progress: {
+                total: totalSlides,
+                completed: completedImages,
+                percentage: Math.round((completedImages / totalSlides) * 100)
+            }
+        });
+
+    } catch (error) {
+        console.error("Lỗi khi kiểm tra trạng thái tạo hình ảnh:", error);
+        res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+// // Thêm API endpoint để tạo slide từ giáo án - giuex ngiuen 
 const createSlidesFromCurriculum = async (req, res) => {
     try {
         const { curriculumId } = req.body;
@@ -787,10 +1011,8 @@ const createSlidesFromCurriculum = async (req, res) => {
         // Gọi hàm tạo slides
         console.log("Bắt đầu tạo slide từ giáo án với ID:", curriculumId);
         const slidesContent = await generateSlidesFromCurriculum(curriculum);
-        console.log("Nội dung slide đã tạo:", slidesContent);
 
         // Lưu kết quả vào database
-        const Slide = require('../models/Slide');
         const slide = new Slide({
             curriculumId,
             title: slidesContent.title,
@@ -815,12 +1037,14 @@ const createSlidesFromCurriculum = async (req, res) => {
         });
     }
 };
+// Thêm API endpoint để tạo slide từ giáo án
 
-// Thêm vào controllers/learn.js
+// API endpoint để xem slide
 const viewSlides = async (req, res) => {
     try {
         const { slideId } = req.params;
         console.log("Yêu cầu xem slide với ID:", slideId);
+
         // Tìm slide theo ID
         const slide = await Slide.findById(slideId);
         if (!slide) {
@@ -835,269 +1059,193 @@ const viewSlides = async (req, res) => {
         res.status(500).send('Có lỗi xảy ra: ' + error.message);
     }
 };
-// Hàm xử lý nội dung giáo trình và tạo slide
-// async function generateSlidesFromCurriculum(curriculum) {
-//     try {
-//         Xử lý và chia nhỏ nội dung giáo trình
-//         const sections = extractSectionsFromContent(curriculum.content);
 
-//         Tạo prompt cho Gemini
-//         const prompt = `
-//         Tôi cần tạo slide giảng dạy cho học sinh từ giáo trình sau:
-
-//         Tiêu đề: ${curriculum.title}
-//         Môn học: ${curriculum.subject}
-//         Lớp: ${curriculum.grade}
-
-//         Nội dung giáo trình được chia thành các phần chính như sau:
-//         ${sections.slice(0, 5).map((section, i) =>
-//             `[Phần ${i + 1}]: ${section.substring(0, 200)}...`
-//         ).join('\n\n')}
-//         ${sections.length > 5 ? `\n\n... và ${sections.length - 5} phần khác` : ''}
-
-//         Hãy tạo một bộ slide đẹp mắt, trực quan để giảng dạy cho học sinh lớp ${curriculum.grade}, bao gồm:
-
-//         1. Slide tiêu đề (tên bài học, môn học)
-//         2. Slide mục tiêu bài học (3-5 mục tiêu chính)
-//         3. 5-10 slide nội dung (mỗi slide chỉ nên có ít điểm chính, dễ hiểu)
-//         4. Slide tổng kết (nhấn mạnh những điểm quan trọng)
-//         5. Slide hoạt động (1-2 bài tập nhỏ hoặc câu hỏi thảo luận)
-
-//         Mỗi slide cần ngắn gọn, trực quan, dễ hiểu cho học sinh. Slide nên có ít chữ, nhiều hình ảnh minh họa.
-
-//         Trả về kết quả dạng JSON:
-//         {
-//           "title": "Tên bộ slide",
-//           "subjectGrade": "Môn học - Lớp",
-//           "slides": [
-//             {
-//               "type": "title | content | activity | summary",
-//               "title": "Tiêu đề slide",
-//               "content": ["Nội dung 1", "Nội dung 2", "Nội dung 3"], 
-//               "imagePrompt": "Mô tả về hình ảnh minh họa phù hợp cho slide này"
-//             }
-//           ]
-//         }`;
-
-//         Gọi Gemini API để tạo nội dung slide
-//         const response = await axios.post(
-//             "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-//             {
-//                 contents: [{ role: "user", parts: [{ text: prompt }] }]
-//             },
-//             {
-//                 headers: {
-//                     "Content-Type": "application/json",
-//                     "x-goog-api-key": "AIzaSyBJSBYNkRyHMHUKe8dkdySIaVXZg6MPx4U"
-//                 },
-//                 timeout: 30000
-//             }
-//         );
-
-//         Xử lý kết quả
-//         const text = response.data.candidates[0].content.parts[0].text;
-//         const match = text.match(/```json\n([\s\S]*)\n```/) || text.match(/\{[\s\S]*\}/);
-
-//         try {
-//             const slidesContent = JSON.parse(match ? match[1] || match[0] : text);
-//             return slidesContent;
-//         } catch (e) {
-//             console.error("Không thể parse JSON từ Gemini:", e);
-//             return {
-//                 title: curriculum.title,
-//                 subjectGrade: `${curriculum.subject} - Lớp ${curriculum.grade}`,
-//                 slides: [
-//                     {
-//                         type: "title",
-//                         title: curriculum.title,
-//                         content: [`${curriculum.subject} - Lớp ${curriculum.grade}`],
-//                         imagePrompt: "Hình ảnh liên quan đến chủ đề giáo dục"
-//                     }
-//                 ]
-//             };
-//         }
-//     } catch (error) {
-//         console.error("Lỗi khi tạo slides:", error);
-//         throw error;
-//     }
-// }
-// Cập nhật hàm generateSlidesFromCurriculum để sử dụng Cloud API
-// async function generateSlidesFromCurriculum(curriculum) {
-//     try {
-//         // Xử lý và chia nhỏ nội dung giáo trình
-//         const sections = extractSectionsFromContent(curriculum.content);
-
-//         // Thử sử dụng Vertex AI từ Google Cloud
-//         const { PredictionServiceClient } = require('@google-cloud/aiplatform');
-//         const predictionClient = new PredictionServiceClient();
-
-//         // Tạo prompt giống như bạn đã làm
-//         const prompt = `
-//         Tôi cần tạo slide giảng dạy cho học sinh từ giáo trình sau:
-
-//         Tiêu đề: ${curriculum.title}
-//         Môn học: ${curriculum.subject}
-//         Lớp: ${curriculum.grade}
-
-//         Nội dung giáo trình được chia thành các phần chính như sau:
-//         ${sections.slice(0, 5).map((section, i) =>
-//             `[Phần ${i + 1}]: ${section.substring(0, 200)}...`
-//         ).join('\n\n')}
-//         ${sections.length > 5 ? `\n\n... và ${sections.length - 5} phần khác` : ''}
-
-//         Hãy tạo một bộ slide đẹp mắt, trực quan để giảng dạy cho học sinh lớp ${curriculum.grade}, bao gồm:
-
-//         1. Slide tiêu đề (tên bài học, môn học)
-//         2. Slide mục tiêu bài học (3-5 mục tiêu chính)
-//         3. 5-10 slide nội dung (mỗi slide chỉ nên có ít điểm chính, dễ hiểu)
-//         4. Slide tổng kết (nhấn mạnh những điểm quan trọng)
-//         5. Slide hoạt động (1-2 bài tập nhỏ hoặc câu hỏi thảo luận)
-
-//         Trả về kết quả dạng JSON với cấu trúc:
-//         {
-//           "title": "Tên bộ slide",
-//           "subjectGrade": "Môn học - Lớp",
-//           "slides": [...]
-//         }`;
-
-//         try {
-//             // Sử dụng Vertex AI (cần đã cài đặt và xác thực Google Cloud)
-//             const projectId = 'AQ.Ab8RN6JFNpiag4DwTQMDoVdhWI5y_cG5w0_bQCXgIZC9-fkuJw'; // Thay đổi theo ID dự án của bạn
-//             const location = 'us-central1';
-//             const model = 'gemini-1.5-flash';
-
-//             const endpoint = `projects/${projectId}/locations/${location}/publishers/google/models/${model}`;
-
-//             const request = {
-//                 endpoint,
-//                 instances: [
-//                     {
-//                         content: prompt
-//                     }
-//                 ],
-//                 parameters: {
-//                     temperature: 0.2,
-//                     maxOutputTokens: 1024,
-//                     topK: 40,
-//                     topP: 0.95,
-//                 }
-//             };
-
-//             const [response] = await predictionClient.predict(request);
-//             const result = response.predictions[0];
-
-//             // Xử lý kết quả trả về
-//             const slidesContent = JSON.parse(result.content);
-//             return slidesContent;
-
-//         } catch (cloudError) {
-//             console.log("Lỗi khi gọi Google Cloud API:", cloudError);
-
-//             // Fallback sang Gemini API hiện tại nếu cloud gặp lỗi
-//             const response = await axios.post(
-//                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-//                 {
-//                     contents: [{ role: "user", parts: [{ text: prompt }] }]
-//                 },
-//                 {
-//                     headers: {
-//                         "Content-Type": "application/json",
-//                         "x-goog-api-key": "AIzaSyBJSBYNkRyHMHUKe8dkdySIaVXZg6MPx4U"
-//                     },
-//                     timeout: 30000
-//                 }
-//             );
-
-//             const text = response.data.candidates[0].content.parts[0].text;
-//             const match = text.match(/```json\n([\s\S]*)\n```/) || text.match(/\{[\s\S]*\}/);
-//             return JSON.parse(match ? match[1] || match[0] : text);
-//         }
-//     } catch (error) {
-//         console.error("Lỗi khi tạo slides:", error);
-//         // return createDefaultSlides(curriculum);
-//     }
-// }
-
-
-
+// Hàm tạo slides từ nội dung giáo trình - giũ nguyên 
 async function generateSlidesFromCurriculum(curriculum) {
     try {
         // Xử lý và chia nhỏ nội dung giáo trình
         const sections = extractSectionsFromContent(curriculum.content);
 
-        // Tạo prompt cho Gemini
-        const prompt = `
-        Tôi cần tạo slide giảng dạy cho học sinh từ giáo trình sau:
 
+
+        const prompt = `
+        Hãy đọc kĩ giáo án của tôi và tạo ra các bài giảng, bài học, bài tập để học sinh có thể luyện tập thật tốt.
+
+        Thông tin giáo án:
         Tiêu đề: ${curriculum.title}
         Môn học: ${curriculum.subject}
         Lớp: ${curriculum.grade}
 
-        Nội dung giáo trình được chia thành các phần chính như sau:
+        Nội dung giáo án chi tiết:
         ${sections.slice(0, 5).map((section, i) =>
-            `[Phần ${i + 1}]: ${section.substring(0, 200)}...`
+            `[Phần ${i + 1}]: ${section.substring(0, 300)}...`
         ).join('\n\n')}
         ${sections.length > 5 ? `\n\n... và ${sections.length - 5} phần khác` : ''}
 
-        Hãy tạo một bộ slide đẹp mắt, trực quan để giảng dạy cho học sinh lớp ${curriculum.grade}, bao gồm:
-
-        1. Slide tiêu đề (tên bài học, môn học)
-        2. Slide mục tiêu bài học (3-5 mục tiêu chính)
-        3. 5-10 slide nội dung (mỗi slide chỉ nên có ít điểm chính, dễ hiểu)
-        4. Slide tổng kết (nhấn mạnh những điểm quan trọng)
-        5. Slide hoạt động (1-2 bài tập nhỏ hoặc câu hỏi thảo luận)
+        Yêu cầu:
+        1. Phân tích kỹ nội dung giáo án và tạo một bộ tài liệu dạy học hoàn chỉnh
+        2. Tạo 10-15 slide với nội dung chi tiết, trực quan và sinh động
+        3. Mỗi slide phải bao gồm:
+           - Tiêu đề rõ ràng
+           - Nội dung cốt lõi, dễ hiểu, phù hợp với lứa tuổi học sinh lớp ${curriculum.grade}
+           - Ví dụ minh họa cụ thể
+        4. Bổ sung 3-5 bài tập thực hành sau mỗi phần kiến thức
+        5. Thêm 5-7 câu hỏi trắc nghiệm có đáp án để học sinh tự kiểm tra
+        6. Đề xuất 2-3 hoạt động nhóm để học sinh thảo luận và ứng dụng kiến thức
 
         Trả về kết quả dạng JSON với cấu trúc:
-                // Tiếp tục hàm generateSlidesFromCurriculum
-                {
-                  "title": "Tên bộ slide",
-                  "subjectGrade": "Môn học - Lớp",
-                  "slides": [
-                    {
-                      "type": "title | content | activity | summary",
-                      "title": "Tiêu đề slide",
-                      "content": ["Nội dung 1", "Nội dung 2", "Nội dung 3"], 
-                      "imagePrompt": "Mô tả về hình ảnh minh họa phù hợp cho slide này"
-                    }
-                  ]
-                }`;
-
-        // Bỏ qua Vertex AI và sử dụng trực tiếp Gemini API để đơn giản hóa
-        const response = await axios.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        {
+          "title": "Tên bộ bài giảng",
+          "subjectGrade": "Môn học - Lớp",
+          "slides": [
             {
-                contents: [{ role: "user", parts: [{ text: prompt }] }]
-            },
-            {
-                headers: {
-                    "Content-Type": "application/json",
-                    "x-goog-api-key": "AIzaSyBJSBYNkRyHMHUKe8dkdySIaVXZg6MPx4U"
-                },
-                timeout: 60000 // Tăng timeout lên 60 giây
+              "type": "title | content | exercise | activity | quiz | summary",
+              "title": "Tiêu đề slide",
+              "content": ["Nội dung 1", "Nội dung 2", "Nội dung 3"],
+              "imagePrompt": "Mô tả hình ảnh minh họa cho slide này"
             }
-        );
+          ],
+          "exercises": [
+            {
+              "title": "Tên bài tập",
+              "description": "Mô tả chi tiết bài tập",
+              "questions": ["Câu hỏi 1", "Câu hỏi 2"],
+              "answers": ["Đáp án 1", "Đáp án 2"]
+            }
+          ],
+          "quizzes": [
+            {
+              "question": "Câu hỏi trắc nghiệm",
+              "options": ["Lựa chọn A", "Lựa chọn B", "Lựa chọn C", "Lựa chọn D"],
+              "correctOption": 0
+            }
+          ]
+        }`;
 
-        // Xử lý kết quả
-        const candidates = response.data.candidates;
-        if (!candidates || candidates.length === 0) {
-            throw new Error("Không nhận được kết quả từ API");
-        }
-
-        const text = candidates[0].content.parts[0].text;
-        const match = text.match(/```json\n([\s\S]*)\n```/) || text.match(/\{[\s\S]*\}/);
-
+        // Gọi đến API để tạo slide
         try {
-            const slidesContent = JSON.parse(match ? match[1] || match[0] : text);
-            return slidesContent;
-        } catch (e) {
-            console.error("Không thể parse JSON từ API:", e);
+            console.log("Đang gửi prompt đến API...");
+
+            // Sử dụng axios để gọi API trực tiếp thay vì sendMessage
+            const response = await axios.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                {
+                    contents: [
+                        {
+                            role: "user",
+                            parts: [{ text: prompt }]
+                        }
+                    ],
+                    generationConfig: {
+                        temperature: 0.7,
+                        maxOutputTokens: 8192,
+                        topP: 0.9
+                    }
+                },
+                {
+                    headers: {
+                        "Content-Type": "application/json",
+                        "x-goog-api-key": process.env.GOOGLE_GENAI_API_KEY || "AIzaSyBJSBYNkRyHMHUKe8dkdySIaVXZg6MPx4U"
+                    },
+                    timeout: 60000 // 60 giây timeout để xử lý yêu cầu lớn
+                }
+            );
+
+            // Xử lý kết quả từ API
+            const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!text) {
+                throw new Error("Không nhận được phản hồi hợp lệ từ API");
+            }
+
+            // Tìm và parse JSON từ kết quả trả về
+            let slidesData;
+            try {
+                // Tìm chuỗi JSON trong phản hồi
+                const jsonMatch = text.match(/```json\n([\s\S]*)\n```/) ||
+                    text.match(/```\n([\s\S]*)\n```/) ||
+                    text.match(/\{[\s\S]*\}/);
+
+                const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : text;
+                slidesData = JSON.parse(jsonStr);
+
+                console.log("Đã parse JSON thành công từ phản hồi API");
+
+                return slidesData;
+            } catch (parseError) {
+                console.error("Không thể parse JSON từ phản hồi:", parseError);
+                console.log("Phản hồi thô từ API:", text.substring(0, 500) + "...");
+                throw new Error("Lỗi khi parse dữ liệu JSON từ phản hồi API");
+            }
+        } catch (apiError) {
+            console.error("Lỗi khi gọi API:", apiError.message);
+            if (apiError.response) {
+                console.error("Chi tiết lỗi:", apiError.response.status, apiError.response.statusText);
+                console.error("Thông tin phản hồi:", apiError.response.data);
+            }
+            // Sử dụng slides mặc định nếu API gặp lỗi
+            console.log("Sử dụng mẫu slides mặc định...");
             return createDefaultSlides(curriculum);
         }
     } catch (error) {
-        console.error("Lỗi khi tạo slides:", error);
-        return createDefaultSlides(curriculum);
+        console.error("Lỗi khi tạo slides từ giáo án:", error.message);
     }
+
 }
+// Thêm import cho Vertex AI
+
+
+// API lấy danh sách tất cả slide
+const getAllSlides = async (req, res) => {
+    try {
+        // Lấy tham số truy vấn (không bắt buộc)
+        const { page = 1, limit = 10, subject, grade } = req.query;
+
+        // Tạo điều kiện tìm kiếm
+        const query = {};
+
+        // Thêm lọc theo môn học nếu có
+        if (subject) {
+            // Tìm các curricula có subject tương ứng
+            const curricula = await Curriculum.find({ subject });
+            const curriculaIds = curricula.map(curr => curr._id);
+            query.curriculumId = { $in: curriculaIds };
+        }
+
+        // Thực hiện truy vấn với phân trang
+        const slides = await Slide.find(query)
+            .populate('curriculumId', 'title subject grade') // Lấy thông tin giáo án liên quan
+            .sort({ createdAt: -1 }) // Sắp xếp mới nhất trước
+            .skip((page - 1) * limit)
+            .limit(Number(limit));
+
+        // Đếm tổng số slide
+        const total = await Slide.countDocuments(query);
+
+        // Trả về kết quả
+        res.status(200).json({
+            success: true,
+            total,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            slides: slides.map(slide => ({
+                id: slide._id,
+                title: slide.title,
+                subject: slide.curriculumId?.subject || 'Không xác định',
+                grade: slide.curriculumId?.grade || 'Không xác định',
+                slideCount: slide.content?.slides?.length || 0,
+                createdAt: slide.createdAt
+            }))
+        });
+    } catch (error) {
+        console.error("Lỗi khi lấy danh sách slide:", error);
+        res.status(500).json({
+            success: false,
+            message: "Không thể lấy danh sách slide",
+            error: error.message
+        });
+    }
+};
+
 
 // Hàm tạo slides mặc định khi API gặp lỗi
 function createDefaultSlides(curriculum) {
@@ -1108,8 +1256,7 @@ function createDefaultSlides(curriculum) {
             {
                 type: "title",
                 title: curriculum.title || "Bài giảng",
-                content: [`${curriculum.subject || "Môn học"} - Lớp ${curriculum.grade || ""}`],
-                imagePrompt: "Hình ảnh minh họa về giáo dục và học tập, phù hợp cho trẻ em"
+                content: [`${curriculum.subject || "Môn học"} - Lớp ${curriculum.grade || ""}`]
             },
             {
                 type: "content",
@@ -1118,8 +1265,7 @@ function createDefaultSlides(curriculum) {
                     "Hiểu được kiến thức cơ bản về chủ đề",
                     "Phát triển kỹ năng liên quan",
                     "Ứng dụng kiến thức vào thực tế"
-                ],
-                imagePrompt: "Hình ảnh về mục tiêu học tập, có thể là bảng mục tiêu hoặc học sinh đang học"
+                ]
             },
             {
                 type: "content",
@@ -1128,8 +1274,7 @@ function createDefaultSlides(curriculum) {
                     "Phần 1: Giới thiệu tổng quan",
                     "Phần 2: Kiến thức cơ bản",
                     "Phần 3: Ứng dụng thực tiễn"
-                ],
-                imagePrompt: "Hình ảnh minh họa cho nội dung chính của bài học"
+                ]
             },
             {
                 type: "summary",
@@ -1138,8 +1283,7 @@ function createDefaultSlides(curriculum) {
                     "Kiến thức quan trọng đã học",
                     "Các ứng dụng thực tiễn",
                     "Kết nối với bài học tiếp theo"
-                ],
-                imagePrompt: "Hình ảnh về tổng kết hoặc kết luận bài học"
+                ]
             },
             {
                 type: "activity",
@@ -1148,12 +1292,12 @@ function createDefaultSlides(curriculum) {
                     "Bài tập 1: Tự luyện tập",
                     "Bài tập 2: Thảo luận nhóm",
                     "Câu hỏi thảo luận: ..."
-                ],
-                imagePrompt: "Hình ảnh học sinh đang làm bài tập hoặc hoạt động nhóm"
+                ]
             }
         ]
     };
 }
+
 // Hàm chia nhỏ nội dung thành các phần
 function extractSectionsFromContent(content) {
     if (!content || typeof content !== 'string') {
@@ -1173,34 +1317,291 @@ function extractSectionsFromContent(content) {
 
         for (let i = 0; i < paragraphs.length; i += chunkSize) {
             const sectionContent = paragraphs.slice(i, i + chunkSize).join('\n\n');
-            if (sectionContent.trim()) {
-                sections.push(sectionContent);
-            }
+            sections.push(sectionContent);
         }
     } else {
-        // Nếu có nhiều tiêu đề, chia theo tiêu đề
+        // Nếu tìm được nhiều tiêu đề, chia theo tiêu đề
         for (let i = 0; i < headingMatches.length; i++) {
-            const start = headingMatches[i].index;
-            const end = (i < headingMatches.length - 1) ?
-                headingMatches[i + 1].index : content.length;
+            const currentMatch = headingMatches[i];
+            const nextMatch = headingMatches[i + 1];
 
-            const sectionContent = content.substring(start, end).trim();
-            if (sectionContent) {
-                sections.push(sectionContent);
-            }
-        }
-    }
+            const startIdx = currentMatch.index;
+            const endIdx = nextMatch ? nextMatch.index : content.length;
 
-    // Nếu vẫn không có section nào, chia theo kích thước
-    if (sections.length === 0) {
-        const maxSectionLength = 2000; // Khoảng 2-3 trang
-        for (let i = 0; i < content.length; i += maxSectionLength) {
-            sections.push(content.substring(i, i + maxSectionLength));
+            const sectionContent = content.substring(startIdx, endIdx).trim();
+            sections.push(sectionContent);
         }
     }
 
     return sections;
 }
+
+
+// const generateCanvaImage = async (req, res) => {
+//     try {
+//         const { prompt, width = 800, height = 600, style, slideId } = req.body;
+
+//         if (!prompt) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "Thiếu prompt để tạo hình ảnh"
+//             });
+//         }
+
+//         console.log(`Đang tạo hình ảnh Canva với prompt: "${prompt}"`);
+
+//         // Tạo hình ảnh sử dụng Canva API
+//         const imageUrl = await createCanvaImage(prompt, width, height, style);
+
+//         // Nếu có slideId, cập nhật URL hình ảnh vào slide
+//         if (slideId && mongoose.Types.ObjectId.isValid(slideId)) {
+//             const { slideIndex } = req.body;
+
+//             if (slideIndex !== undefined) {
+//                 const slide = await Slide.findById(slideId);
+//                 if (slide && slide.content.slides[slideIndex]) {
+//                     slide.content.slides[slideIndex].imageUrl = imageUrl;
+//                     await slide.save();
+//                     console.log(`Đã cập nhật hình ảnh cho slide ${slideIndex} của slideId: ${slideId}`);
+//                 }
+//             }
+//         }
+
+//         // Trả về URL hình ảnh đã tạo
+//         res.status(200).json({
+//             success: true,
+//             message: "Đã tạo hình ảnh thành công",
+//             data: {
+//                 imageUrl: imageUrl
+//             }
+//         });
+
+//     } catch (err) {
+//         console.error("Lỗi khi tạo hình ảnh Canva:", err);
+//         res.status(500).json({
+//             success: false,
+//             message: "Không thể tạo hình ảnh",
+//             error: err.message
+//         });
+//     }
+// };
+
+// // Hàm tạo hình ảnh bằng Canva API
+// async function createCanvaImage(prompt, width, height, style) {
+//     try {
+//         // Kiểm tra và lấy Canva API key từ biến môi trường
+//         const openaiApiKey = process.env.OPENAI_API_KEY;
+
+//         if (!CANVA_API_KEY) {
+//             throw new Error("Thiếu Canva API Key trong biến môi trường");
+//         }
+//         if (!openaiApiKey) {
+//             throw new Error("Thiếu OpenAI API Key trong biến môi trường");
+//         }
+//         // Chuẩn bị prompt cho hình ảnh giáo dục
+//         let enhancedPrompt = prompt;
+//         if (style) {
+//             enhancedPrompt += `, ${style} style`;
+//         } else {
+//             enhancedPrompt += ", educational style, clear, colorful, suitable for students";
+//         }
+
+//         // Gọi OpenAI API để tạo hình ảnh
+//         const response = await axios.post(
+//             "https://api.openai.com/v1/images/generations",
+//             {
+//                 model: "dall-e-3",
+//                 prompt: enhancedPrompt,
+//                 n: 1,
+//                 size: `${width}x${height}`,
+//                 quality: "standard",
+//                 response_format: "url"
+//             },
+//             {
+//                 headers: {
+//                     "Content-Type": "application/json",
+//                     "Authorization": `Bearer ${openaiApiKey}`
+//                 },
+//                 timeout: 30000
+//             }
+//         );
+
+//         // Lấy URL hình ảnh từ phản hồi
+//         const imageUrl = response.data.imageUrl;
+
+//         // Tải hình ảnh từ URL và lưu vào Cloudinary để lưu trữ lâu dài
+//         const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+//         const buffer = Buffer.from(imageResponse.data);
+
+//         // Upload lên Cloudinary
+//         const cloudinaryUrl = await new Promise((resolve, reject) => {
+//             const uploadStream = cloudinary.uploader.upload_stream(
+//                 {
+//                     folder: 'canva-images',
+//                     resource_type: 'image'
+//                 },
+//                 (error, result) => {
+//                     if (error) {
+//                         reject(error);
+//                     } else {
+//                         resolve(result.secure_url);
+//                     }
+//                 }
+//             );
+
+//             streamifier.createReadStream(buffer).pipe(uploadStream);
+//         });
+
+//         console.log(`Đã tạo và lưu hình ảnh Canva thành công`);
+//         return cloudinaryUrl;
+
+//     } catch (error) {
+//         console.error("Lỗi khi tạo hình ảnh bằng Canva:", error);
+
+//         // Nếu không tạo được hình ảnh, sử dụng hình ảnh placeholder
+//         return `https://via.placeholder.com/${width}x${height}/3498db/ffffff?text=${encodeURIComponent(prompt.substring(0, 20))}`;
+//     }
+// }
+
+// Controller tạo hình ảnh bằng Google Gemini
+const generateGeminiImage = async (req, res) => {
+    try {
+        const prompt = req.body.prompt || req.query.prompt;
+
+        if (!prompt) {
+            return res.status(400).json({
+                success: false,
+                message: "Thiếu prompt để tạo hình ảnh"
+            });
+        }
+
+        console.log(`Đang tạo hình ảnh Gemini cho prompt: "${prompt}"`);
+
+        try {
+            // Gọi hàm tạo hình ảnh với Google Gemini
+            const imageUrl = await createGeminiImage(prompt);
+
+            // Trả về URL hình ảnh đã tạo
+            res.status(200).json({
+                success: true,
+                imageUrl: imageUrl
+            });
+
+        } catch (error) {
+            console.error("Lỗi khi tạo hình ảnh Gemini:", error);
+            res.status(500).json({
+                success: false,
+                message: "Không thể tạo hình ảnh",
+                error: error.message
+            });
+        }
+    } catch (err) {
+        console.error("Lỗi server:", err);
+        res.status(500).json({
+            success: false,
+            message: "Lỗi server khi xử lý yêu cầu"
+        });
+    }
+};
+
+// Hàm helper để tạo hình ảnh bằng Google Gemini (Imagen)
+// Hàm helper để tạo hình ảnh bằng Google Gemini (Imagen)
+async function createGeminiImage(prompt) {
+    try {
+        // Lấy API key từ biến môi trường
+        const googleApiKey = process.env.GOOGLE_GENAI_API_KEY;
+
+        if (!googleApiKey) {
+            throw new Error("Thiếu Google API Key trong biến môi trường");
+        }
+
+        // Tạo prompt nâng cao
+        const enhancedPrompt = `${prompt}, high quality, detailed, educational, clear image`;
+
+        console.log("Đang gọi Gemini Image API với prompt:", enhancedPrompt.substring(0, 50) + "...");
+
+        // Gọi Google Gemini API với model hỗ trợ tạo hình ảnh
+        const response = await axios.post(
+            "https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-preview-image-generation:generateContent",
+            {
+                contents: enhancedPrompt,
+                config: {
+                    responseModalities: ["text", "image"]
+                }
+            },
+            {
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-goog-api-key": googleApiKey
+                },
+                timeout: 60000
+            }
+        );
+
+        // Xử lý phản hồi để lấy dữ liệu hình ảnh
+        if (response.data?.candidates?.[0]?.content?.parts) {
+            for (const part of response.data.candidates[0].content.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                    // Tìm thấy phần dữ liệu hình ảnh
+                    const base64Data = part.inlineData.data;
+                    const mimeType = part.inlineData.mimeType || 'image/jpeg';
+
+                    // Tạo URL data cho hình ảnh
+                    const dataUrl = `data:${mimeType};base64,${base64Data}`;
+
+                    // Upload hình ảnh lên Cloudinary để lưu trữ lâu dài
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    const cloudinaryUrl = await uploadToCloudinary(buffer);
+
+                    return cloudinaryUrl || dataUrl;
+                }
+            }
+        }
+
+        throw new Error("Không nhận được dữ liệu hình ảnh từ Gemini API");
+
+    } catch (error) {
+        console.error("Lỗi khi gọi Google Image API:", error);
+
+        // Log chi tiết về lỗi
+        if (error.response && error.response.data) {
+            console.error("Chi tiết lỗi từ Google API:", JSON.stringify(error.response.data));
+        }
+
+        // Trả về hình ảnh placeholder nếu có lỗi
+        return `https://via.placeholder.com/1024x768/3498db/ffffff?text=${encodeURIComponent(prompt.substring(0, 20))}`;
+    }
+}
+
+// Hàm hỗ trợ upload lên Cloudinary
+async function uploadToCloudinary(buffer) {
+    try {
+        return new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+                {
+                    folder: 'gemini-images',
+                    resource_type: 'image'
+                },
+                (error, result) => {
+                    if (error) {
+                        console.error("Lỗi khi upload lên Cloudinary:", error);
+                        reject(error);
+                    } else {
+                        console.log("Đã upload hình ảnh thành công lên Cloudinary");
+                        resolve(result.secure_url);
+                    }
+                }
+            );
+
+            streamifier.createReadStream(buffer).pipe(uploadStream);
+        });
+    } catch (error) {
+        console.error("Lỗi khi xử lý upload:", error);
+        return null;
+    }
+}
+
+
 module.exports = {
     suggestLearningPath,
     uploadCurriculum,
@@ -1209,5 +1610,10 @@ module.exports = {
     createLearningPath,
     createSlidesFromCurriculum,
     viewSlides,
-    getSlidesData
+    getSlidesData,
+    checkImageGenerationStatus,
+    generateGeminiImage,
+    getAllSlides
+    // Các function mới thêm:
+
 };

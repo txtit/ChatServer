@@ -10,4 +10,11 @@ router.post('/slides', learnController.createSlidesFromCurriculum);
 // Thêm vào routes/learn.js
 router.get('/slides-data/:slideId', learnController.getSlidesData);
 router.get('/view-slides/:slideId', learnController.viewSlides);
+// Thêm route để kiểm tra trạng thái tạo hình ảnh
+router.get('/slides/:slideId/image-status', learnController.checkImageGenerationStatus);
+router.post('/slides/image', learnController.generateGeminiImage);
+router.get('/slides/getAll', learnController.getAllSlides);
+router.post('/slides/progress', learnController.updateProgress);
+
+
 module.exports = router;
